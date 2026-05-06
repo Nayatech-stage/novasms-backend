@@ -286,16 +286,21 @@ export class AuthService {
     let payload: { sub?: string; purpose?: string; accountId?: string };
 
     try {
-      payload = this.jwtService.verify<{ sub?: string; purpose?: string; accountId?: string }>(
-        twoFactorToken,
-        { secret: process.env.JWT_ACCESS_SECRET },
-      );
+      payload = this.jwtService.verify<{
+        sub?: string;
+        purpose?: string;
+        accountId?: string;
+      }>(twoFactorToken, { secret: process.env.JWT_ACCESS_SECRET });
     } catch {
-      throw new UnauthorizedException('Code de vérification invalide ou expiré');
+      throw new UnauthorizedException(
+        'Code de vérification invalide ou expiré',
+      );
     }
 
     if (payload.purpose !== 'two-factor' || !payload.sub) {
-      throw new UnauthorizedException('Code de vérification invalide ou expiré');
+      throw new UnauthorizedException(
+        'Code de vérification invalide ou expiré',
+      );
     }
 
     const account = await this.prisma.account.findUnique({
@@ -310,11 +315,15 @@ export class AuthService {
     const now = new Date();
 
     if (!authAccount.twoFactorEnabled) {
-      throw new UnauthorizedException('La double authentification est désactivée');
+      throw new UnauthorizedException(
+        'La double authentification est désactivée',
+      );
     }
 
     const normalizedCode = code.trim();
-    const backupCodes = Array.isArray(authAccount.backupCodes) ? authAccount.backupCodes : [];
+    const backupCodes = Array.isArray(authAccount.backupCodes)
+      ? authAccount.backupCodes
+      : [];
     const matchedBackupCode = backupCodes.find((bc) => bc === normalizedCode);
 
     if (!matchedBackupCode) {
@@ -370,7 +379,10 @@ export class AuthService {
     return { success: true, message: 'Onboarding marked as completed' };
   }
 
-  private async verifyPassword(plainPassword: string, hash: string): Promise<boolean> {
+  private async verifyPassword(
+    plainPassword: string,
+    hash: string,
+  ): Promise<boolean> {
     return await bcrypt.compare(plainPassword, hash);
   }
 
@@ -413,7 +425,8 @@ export class AuthService {
       },
       {
         secret: process.env.JWT_ACCESS_SECRET,
-        expiresIn: `${TWO_FACTOR_CODE_TTL_MINUTES}m` as JwtSignOptions['expiresIn'],
+        expiresIn:
+          `${TWO_FACTOR_CODE_TTL_MINUTES}m` as JwtSignOptions['expiresIn'],
       },
     );
   }
@@ -435,36 +448,46 @@ export class AuthService {
   async generateTwoFactorSecret(accountId: string) {
     if (!accountId) throw new BadRequestException('accountId missing');
 
-    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
     if (!account) throw new BadRequestException('Account not found');
 
+    /* speakeasy doesn't have strict types in this project environment; disable
+       the specific ESLint type-safety checks for this call only. */
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const secret = speakeasy.generateSecret({
       name: `NovaSMS (${account.adminEmail})`,
       issuer: 'NovaSMS',
       length: 32,
+    }) as { base32: string; otpauth_url: string };
+
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: { twoFactorSecret: secret.base32 },
     });
 
-    await this.prisma.account.update({ 
-      where: { id: accountId }, 
-      data: { twoFactorSecret: secret.base32 } 
-    });
-
-    return { 
-      success: true, 
-      secret: secret.base32, 
+    return {
+      success: true,
+      secret: secret.base32,
       otpauth_url: secret.otpauth_url,
     };
   }
 
   async enableTwoFactor(accountId: string, code: string) {
-    if (!accountId || !code) throw new BadRequestException('accountId and code required');
+    if (!accountId || !code)
+      throw new BadRequestException('accountId and code required');
 
-    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
     if (!account) throw new BadRequestException('Account not found');
-    
-    const secret = (account as any).twoFactorSecret;
+
+    const secret = account.twoFactorSecret;
     if (!secret) throw new BadRequestException('2FA secret not set');
 
+    // speakeasy.totp may be untyped in this environment — suppress type-safety ESLint rules here
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const ok = speakeasy.totp.verify({
       secret,
       encoding: 'base32',
@@ -475,16 +498,16 @@ export class AuthService {
 
     const backupCodes = this.generateBackupCodes(10);
 
-    await this.prisma.account.update({ 
-      where: { id: accountId }, 
-      data: { 
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: {
         twoFactorEnabled: true,
         backupCodes: backupCodes,
-      } 
+      },
     });
-    
-    return { 
-      success: true, 
+
+    return {
+      success: true,
       message: '2FA activée avec succès',
       backup_codes: backupCodes,
     };
@@ -492,30 +515,36 @@ export class AuthService {
 
   async disableTwoFactor(accountId: string) {
     if (!accountId) throw new BadRequestException('accountId required');
-    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
     if (!account) throw new BadRequestException('Account not found');
 
-    await this.prisma.account.update({ 
-      where: { id: accountId }, 
-      data: { twoFactorEnabled: false, twoFactorSecret: null } 
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: { twoFactorEnabled: false, twoFactorSecret: null },
     });
     return { success: true, message: '2FA désactivée' };
   }
 
-  async sendTwoFactorSms(accountId: string, phone?: string) {
+  async sendTwoFactorSms(accountId: string, _phone?: string) {
     if (!accountId) throw new BadRequestException('accountId required');
-    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
     if (!account) throw new BadRequestException('Account not found');
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiry = new Date(Date.now() + 10 * 60 * 1000);
 
-    await this.prisma.account.update({ 
-      where: { id: accountId }, 
-      data: { twoFactorCode: code, twoFactorCodeExpiry: expiry } 
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
     });
 
-    console.log(`[Auth] 2FA SMS code for ${account.adminEmail}: ${code}`);
+    console.log(
+      `[Auth] 2FA SMS code for ${account.adminEmail}: ${code} (phone: ${_phone || 'n/a'})`,
+    );
 
     return { success: true, message: 'Code 2FA envoyé (placeholder)' };
   }

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-extraneous-class */
 import { Module } from '@nestjs/common';
 import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -10,13 +11,17 @@ const jwtAccessExpiration = process.env.JWT_ACCESS_EXPIRATION;
 const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
 const jwtRefreshExpiration = process.env.JWT_REFRESH_EXPIRATION;
 
-if (!jwtAccessSecret || !jwtAccessExpiration || !jwtRefreshSecret || !jwtRefreshExpiration) {
+if (
+  !jwtAccessSecret ||
+  !jwtAccessExpiration ||
+  !jwtRefreshSecret ||
+  !jwtRefreshExpiration
+) {
   throw new Error('Missing required JWT environment variables');
 }
 
 // Assertion de type correcte pour expiresIn
 const accessExpiresIn = jwtAccessExpiration as JwtSignOptions['expiresIn'];
-const refreshExpiresIn = jwtRefreshExpiration as JwtSignOptions['expiresIn'];
 
 @Module({
   imports: [
@@ -29,4 +34,6 @@ const refreshExpiresIn = jwtRefreshExpiration as JwtSignOptions['expiresIn'];
   providers: [JwtStrategy, JwtAuthGuard],
   exports: [JwtAuthGuard],
 })
-export class JwtAuthModule {}
+export class JwtAuthModule {
+  static readonly __module = 'JwtAuthModule';
+}

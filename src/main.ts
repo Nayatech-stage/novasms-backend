@@ -5,16 +5,16 @@ import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  
+
   // Préfixe global pour toutes les routes API
   app.setGlobalPrefix('api');
-  
+
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableCors({
     origin: [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
     credentials: true,
   });
-  
+
   const config = new DocumentBuilder()
     .setTitle('NovaSMS API')
     .setDescription('API documentation for NovaSMS platform')
@@ -23,7 +23,7 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
-  
+
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
   console.log('🚀 Backend running on http://localhost:' + port);

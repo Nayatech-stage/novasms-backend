@@ -114,7 +114,9 @@ export class MailService {
           html: htmlContent,
         });
         if (this.isDev) {
-          this.logger.log(`Code 2FA envoyé à ${email} (Resend) — code: ${code}`);
+          this.logger.log(
+            `Code 2FA envoyé à ${email} (Resend) — code: ${code}`,
+          );
         } else {
           this.logger.log(`Code 2FA envoyé à ${email} (Resend)`);
         }
