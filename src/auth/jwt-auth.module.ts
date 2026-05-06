@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-extraneous-class */
 import { Module } from '@nestjs/common';
 import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
@@ -35,5 +34,5 @@ const accessExpiresIn = jwtAccessExpiration as JwtSignOptions['expiresIn'];
   exports: [JwtAuthGuard],
 })
 export class JwtAuthModule {
-  static readonly __module = 'JwtAuthModule';
+  private readonly __moduleBrand = true;
 }

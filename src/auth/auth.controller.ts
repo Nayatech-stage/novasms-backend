@@ -8,6 +8,7 @@ import {
   Param,
   UseGuards,
   Request,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Request as ExpressRequest } from 'express';
 
@@ -70,7 +71,7 @@ export class AuthController {
     @Request() req: ExpressRequest & { user?: JwtUser },
   ) {
     // req.user contient accountId grâce au JwtStrategy
-    const user = req.user as JwtUser | undefined;
+    const user = req.user;
     if (!user) throw new BadRequestException('Utilisateur non authentifié');
     return this.authService.markOnboardingCompleted(user.accountId);
   }
@@ -90,7 +91,7 @@ export class AuthController {
   async generateTwoFactorSecret(
     @Request() req: ExpressRequest & { user?: JwtUser },
   ) {
-    const user = req.user as JwtUser | undefined;
+    const user = req.user;
     if (!user) throw new BadRequestException('Utilisateur non authentifié');
     return this.authService.generateTwoFactorSecret(user.accountId);
   }
@@ -102,7 +103,7 @@ export class AuthController {
     @Request() req: ExpressRequest & { user?: JwtUser },
     @Body() body: { code: string },
   ) {
-    const user = req.user as JwtUser | undefined;
+    const user = req.user;
     if (!user) throw new BadRequestException('Utilisateur non authentifié');
     return this.authService.enableTwoFactor(user.accountId, body.code);
   }
@@ -111,7 +112,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Désactiver la 2FA pour un compte' })
   async disableTwoFactor(@Request() req: ExpressRequest & { user?: JwtUser }) {
-    const user = req.user as JwtUser | undefined;
+    const user = req.user;
     if (!user) throw new BadRequestException('Utilisateur non authentifié');
     return this.authService.disableTwoFactor(user.accountId);
   }
@@ -123,7 +124,7 @@ export class AuthController {
     @Request() req: ExpressRequest & { user?: JwtUser },
     @Body() body: { phone?: string },
   ) {
-    const user = req.user as JwtUser | undefined;
+    const user = req.user;
     if (!user) throw new BadRequestException('Utilisateur non authentifié');
     return this.authService.sendTwoFactorSms(user.accountId, body.phone);
   }
@@ -132,7 +133,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Récupérer les informations du compte courant' })
   async me(@Request() req: ExpressRequest & { user?: JwtUser }) {
-    const user = req.user as JwtUser | undefined;
+    const user = req.user;
     if (!user) throw new BadRequestException('Utilisateur non authentifié');
     return this.authService.getAccount(user.accountId);
   }
