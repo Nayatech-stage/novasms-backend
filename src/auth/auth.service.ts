@@ -21,17 +21,26 @@ type AuthAccount = {
   companyName: string;
   adminEmail: string;
   passwordHash: string;
+  sector: string | null;
+  primaryChannels: string[];
   emailVerified: boolean;
   loginAttempts: number;
   lockedUntil: Date | null;
-  twoFactorEnabled: boolean;
   twoFactorCode: string | null;
   twoFactorCodeExpiry: Date | null;
   twoFactorSecret: string | null;
   backupCodes?: string[];
   // ✅ NOUVEAUX CHAMPS pour Wizard + RBAC + Multi-tenant
   onboardingCompleted: boolean;
-  role: string; // "admin", "editor", "analyst"
+};
+
+type AuthUser = {
+  id: string;
+  accountId: string;
+  email: string;
+  passwordHash: string;
+  role: string;
+  twoFactorEnabled: boolean;
 };
 
 type AuthTokens = {
@@ -74,6 +83,25 @@ export class AuthService {
         tokenExpiry: expiry,
         emailVerified: false,
         onboardingCompleted: false, // ✅ Valeur par défaut
+      },
+    });
+
+    const createdAccount = await this.prisma.account.findUnique({
+      where: { adminEmail: data.email },
+      select: { id: true },
+    });
+
+    if (!createdAccount) {
+      throw new BadRequestException('Account creation failed');
+    }
+
+    await this.prisma.user.create({
+      data: {
+        accountId: createdAccount.id,
+        email: data.email,
+        passwordHash: hashedPassword,
+        role: 'admin',
+        twoFactorEnabled: false,
       },
     });
 
@@ -172,6 +200,7 @@ export class AuthService {
     }
 
     const authAccount = account as unknown as AuthAccount;
+    const primaryUser = await this.getPrimaryUser(authAccount);
     const now = new Date();
 
     // Vérifier blocage temporaire
@@ -231,7 +260,7 @@ export class AuthService {
     });
 
     // 2FA si activé
-    if (authAccount.twoFactorEnabled) {
+    if (primaryUser.twoFactorEnabled) {
       const twoFactorCode = this.generateTwoFactorCode();
       const twoFactorCodeExpiry = new Date(
         Date.now() + TWO_FACTOR_CODE_TTL_MINUTES * 60 * 1000,
@@ -257,13 +286,15 @@ export class AuthService {
           id: authAccount.id,
           email: authAccount.adminEmail,
           name: authAccount.companyName,
-          onboardingCompleted: authAccount.onboardingCompleted, // ✅ Pour redirection frontend
+          role: primaryUser.role,
+          sector: authAccount.sector,
+          primaryChannels: authAccount.primaryChannels,
+          onboardingCompleted: authAccount.onboardingCompleted,
         },
       };
     }
 
-    // Génération tokens JWT
-    const tokens = this.generateTokens(authAccount);
+    const tokens = this.generateTokens(authAccount, primaryUser.role);
 
     return {
       success: true,
@@ -273,7 +304,10 @@ export class AuthService {
         id: authAccount.id,
         email: authAccount.adminEmail,
         name: authAccount.companyName,
-        onboardingCompleted: authAccount.onboardingCompleted, // ✅ CLÉ pour Wizard/Dashboard
+        role: primaryUser.role,
+        sector: authAccount.sector,
+        primaryChannels: authAccount.primaryChannels,
+        onboardingCompleted: authAccount.onboardingCompleted,
       },
     };
   }
@@ -312,9 +346,10 @@ export class AuthService {
     }
 
     const authAccount = account as unknown as AuthAccount;
+    const primaryUser = await this.getPrimaryUser(authAccount);
     const now = new Date();
 
-    if (!authAccount.twoFactorEnabled) {
+    if (!primaryUser.twoFactorEnabled) {
       throw new UnauthorizedException(
         'La double authentification est désactivée',
       );
@@ -355,7 +390,7 @@ export class AuthService {
       },
     });
 
-    const tokens = this.generateTokens(authAccount);
+    const tokens = this.generateTokens(authAccount, primaryUser.role);
 
     return {
       success: true,
@@ -365,6 +400,9 @@ export class AuthService {
         id: authAccount.id,
         email: authAccount.adminEmail,
         name: authAccount.companyName,
+        role: primaryUser.role,
+        sector: authAccount.sector,
+        primaryChannels: authAccount.primaryChannels,
         onboardingCompleted: authAccount.onboardingCompleted, // ✅ Pour redirection frontend
       },
     };
@@ -379,6 +417,82 @@ export class AuthService {
     return { success: true, message: 'Onboarding marked as completed' };
   }
 
+  async updateProfile(
+    accountId: string,
+    profile: {
+      companyName: string;
+      role?: string;
+      sector?: string;
+      primaryChannels?: string[];
+    },
+  ) {
+    if (!accountId) throw new BadRequestException('accountId required');
+
+    const companyName = profile.companyName.trim();
+    if (!companyName) {
+      throw new BadRequestException('Company name required');
+    }
+
+    const normalizedRole = this.normalizeRole(profile.role);
+
+    const accountSnapshot = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: {
+        id: true,
+        adminEmail: true,
+        passwordHash: true,
+      },
+    });
+
+    if (!accountSnapshot) {
+      throw new BadRequestException('Account not found');
+    }
+
+    const account = await this.prisma.account.update({
+      where: { id: accountId },
+      data: {
+        companyName,
+      },
+      select: {
+        id: true,
+        adminEmail: true,
+        companyName: true,
+        onboardingCompleted: true,
+      },
+    });
+
+    const user = await this.getPrimaryUser(
+      {
+        id: account.id,
+        companyName: account.companyName,
+        adminEmail: account.adminEmail,
+        passwordHash: accountSnapshot.passwordHash,
+        sector: null,
+        primaryChannels: [],
+        emailVerified: true,
+        loginAttempts: 0,
+        lockedUntil: null,
+        twoFactorCode: null,
+        twoFactorCodeExpiry: null,
+        twoFactorSecret: null,
+        backupCodes: [],
+        onboardingCompleted: account.onboardingCompleted,
+      },
+      normalizedRole,
+    );
+
+    return {
+      success: true,
+      account: {
+        ...account,
+        sector: null,
+        primaryChannels: [],
+        role: user.role,
+        twoFactorEnabled: user.twoFactorEnabled,
+      },
+    };
+  }
+
   private async verifyPassword(
     plainPassword: string,
     hash: string,
@@ -386,13 +500,14 @@ export class AuthService {
     return await bcrypt.compare(plainPassword, hash);
   }
 
-  private generateTokens(account: AuthAccount): AuthTokens {
+  private generateTokens(account: AuthAccount, role: string): AuthTokens {
     // ✅ Payload enrichi pour multi-tenant + RBAC
     const payload = {
       sub: account.id,
       email: account.adminEmail,
       accountId: account.id, // 🔑 Isolation données entre entreprises
-      role: account.role || 'admin', // 🔑 Permissions dans l'entreprise
+      role,
+      onboardingCompleted: account.onboardingCompleted,
     };
 
     const accessTokenExpiresIn = process.env
@@ -480,6 +595,11 @@ export class AuthService {
 
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
+      select: {
+        id: true,
+        adminEmail: true,
+        twoFactorSecret: true,
+      },
     });
     if (!account) throw new BadRequestException('Account not found');
 
@@ -497,13 +617,22 @@ export class AuthService {
     if (!ok) throw new UnauthorizedException('Code invalide');
 
     const backupCodes = this.generateBackupCodes(10);
+    const primaryUser = await this.prisma.user.findUnique({
+      where: { email: account.adminEmail },
+    });
+
+    if (!primaryUser) {
+      throw new BadRequestException('Primary user not found');
+    }
+
+    await this.prisma.user.update({
+      where: { email: primaryUser.email },
+      data: { twoFactorEnabled: true },
+    });
 
     await this.prisma.account.update({
-      where: { id: accountId },
-      data: {
-        twoFactorEnabled: true,
-        backupCodes: backupCodes,
-      },
+      where: { id: account.id },
+      data: { backupCodes },
     });
 
     return {
@@ -517,12 +646,35 @@ export class AuthService {
     if (!accountId) throw new BadRequestException('accountId required');
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
+      select: {
+        id: true,
+        adminEmail: true,
+        twoFactorSecret: true,
+      },
     });
     if (!account) throw new BadRequestException('Account not found');
 
+    const primaryUser = await this.prisma.user.findUnique({
+      where: { email: account.adminEmail },
+    });
+
+    if (!primaryUser) {
+      throw new BadRequestException('Primary user not found');
+    }
+
+    await this.prisma.user.update({
+      where: { email: primaryUser.email },
+      data: { twoFactorEnabled: false },
+    });
+
     await this.prisma.account.update({
-      where: { id: accountId },
-      data: { twoFactorEnabled: false, twoFactorSecret: null },
+      where: { id: account.id },
+      data: {
+        twoFactorSecret: null,
+        backupCodes: [],
+        twoFactorCode: null,
+        twoFactorCodeExpiry: null,
+      },
     });
     return { success: true, message: '2FA désactivée' };
   }
@@ -558,13 +710,109 @@ export class AuthService {
         id: true,
         adminEmail: true,
         companyName: true,
-        twoFactorEnabled: true,
+        creditBalance: true,
         backupCodes: true,
         twoFactorSecret: true,
         onboardingCompleted: true,
+        passwordHash: true,
       },
     });
     if (!account) throw new BadRequestException('Account not found');
-    return { success: true, account };
+
+    const user = await this.getPrimaryUser({
+      id: account.id,
+      companyName: account.companyName,
+      adminEmail: account.adminEmail,
+      passwordHash: account.passwordHash,
+      sector: null,
+      primaryChannels: [],
+      emailVerified: true,
+      loginAttempts: 0,
+      lockedUntil: null,
+      twoFactorCode: null,
+      twoFactorCodeExpiry: null,
+      twoFactorSecret: account.twoFactorSecret,
+      backupCodes: account.backupCodes,
+      onboardingCompleted: account.onboardingCompleted,
+    });
+
+    return {
+      success: true,
+      account: {
+        ...account,
+        sector: null,
+        primaryChannels: [],
+        role: user.role,
+        twoFactorEnabled: user.twoFactorEnabled,
+      },
+    };
+  }
+
+  private async getPrimaryUser(
+    account: AuthAccount & { passwordHash?: string },
+    desiredRole?: string,
+  ): Promise<AuthUser> {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: account.adminEmail },
+    });
+
+    if (existingUser) {
+      if (existingUser.accountId !== account.id) {
+        throw new BadRequestException('Primary user does not match account');
+      }
+
+      if (desiredRole && existingUser.role !== desiredRole) {
+        return this.prisma.user.update({
+          where: { email: account.adminEmail },
+          data: { role: desiredRole },
+        });
+      }
+
+      return existingUser;
+    }
+
+    if (!account.passwordHash) {
+      throw new BadRequestException('Primary user not found');
+    }
+
+    return this.prisma.user.create({
+      data: {
+        accountId: account.id,
+        email: account.adminEmail,
+        passwordHash: account.passwordHash,
+        role: desiredRole || 'admin',
+        twoFactorEnabled: false,
+      },
+    });
+  }
+
+  private normalizeRole(role?: string): string | undefined {
+    if (!role) {
+      return undefined;
+    }
+
+    const value = role.trim().toLowerCase();
+
+    if (!value) {
+      return undefined;
+    }
+
+    if (value.includes('administr')) {
+      return 'admin';
+    }
+
+    if (value.includes('marketing')) {
+      return 'marketing_manager';
+    }
+
+    if (
+      value.includes('boutique') ||
+      value.includes('gérant') ||
+      value.includes('gerant')
+    ) {
+      return 'store_manager';
+    }
+
+    return value.slice(0, 20);
   }
 }

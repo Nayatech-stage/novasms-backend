@@ -66,6 +66,7 @@ model Contact {
   phone       String?  @db.VarChar(20)
   firstName   String?  @db.VarChar(100)
   lastName    String?  @db.VarChar(100)
+  location    String?  @db.VarChar(100)  // Added for filtering
   tags        Json?
   createdAt   DateTime @default(now()) @db.Timestamp
   optOut      Boolean  @default(false)
@@ -73,8 +74,19 @@ model Contact {
   consents    Consent[]
   sends       Send[]
   analytics   Analytic[]
+  
+  // Indexes for performance
+  @@index([accountId, email])
+  @@index([accountId, phone])
+  @@index([accountId, createdAt])
+  @@index([accountId, location])
+  @@index([accountId, optOut])
+  @@index([accountId, firstName])
+  @@index([accountId, lastName])
 
-  // ⚠️ Contrainte CHECK ajoutée manuellement après migration
+  // For tag filtering, we need a GIN index which Prisma doesn't fully support yet
+  // This would need to be added manually to the database
+
   @@map("contacts")
 }
 
@@ -85,7 +97,10 @@ model Segment {
   name           String?   @db.VarChar(255)
   type           String?   @db.VarChar(20)
   criteria       Json?
+  contactCount   Int       @default(0)
   lastCalculated DateTime? @db.Timestamp
+  // Index for performance
+  @@index([accountId])
 
   @@map("segments")
 }
@@ -174,6 +189,7 @@ model AuditLog {
   details     Json?
 
   @@map("audit_logs")
+  @@index([accountId, createdAt]) // Added for performance in audit queries
 }
 
 model Invitation {

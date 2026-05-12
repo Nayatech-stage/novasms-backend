@@ -1,0 +1,613 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { redisConnection } from '../queues/import.queue';
+import { SegmentRecalculationService } from '../queues/segment.recalculation.service';
+
+type ContactHistoryEvent = {
+  id: string;
+  type: string;
+  message: string;
+  createdAt: Date;
+};
+
+type ContactExportPayload = {
+  id: string;
+  accountId: string;
+  email: string | null;
+  phone: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  tags: string[];
+  createdAt: Date;
+  optOut: boolean;
+  notes: Array<{ id: string; content: string; createdAt: Date }>;
+  history: ContactHistoryEvent[];
+};
+
+type SegmentLogic = 'AND' | 'OR';
+type SegmentCriterion = {
+  field: 'tag' | 'status' | 'email' | 'phone' | 'firstName' | 'lastName';
+  operator: 'equals' | 'contains';
+  value: string;
+};
+
+type SegmentCriteriaPayload = {
+  logic: SegmentLogic;
+  rules: SegmentCriterion[];
+};
+
+@Injectable()
+export class ContactsService {
+  constructor(
+    private prisma: PrismaService,
+    private segmentRecalculationService: SegmentRecalculationService,
+  ) {}
+
+  private readonly logger = new Logger(ContactsService.name);
+
+  private buildWhereForSegment(
+    accountId: string,
+    logic: SegmentLogic,
+    criteria: SegmentCriterion[],
+  ) {
+    // Ensure tenant isolation by including accountId in every query
+    const whereClause: any = { accountId };
+
+    const cleaned = criteria
+      .filter((criterion) => criterion.value?.toString().trim().length > 0)
+      .map((criterion) => ({ 
+        ...criterion, 
+        value: criterion.value.toString().trim() 
+      }));
+
+    if (cleaned.length === 0) {
+      return whereClause;
+    }
+
+    const mapped = cleaned
+      .map((criterion) => {
+        // Security validation - ensure field is valid
+        if (!['tag', 'status', 'email', 'phone', 'firstName', 'lastName', 'location'].includes(criterion.field)) {
+          console.warn('Invalid field in segment criteria: ' + criterion.field);
+          return null;
+        }
+
+        if (criterion.field === 'tag') {
+          return { tags: { has: criterion.value } };
+        }
+
+        if (criterion.field === 'status') {
+          if (criterion.value.toLowerCase() === 'inactive') return { optOut: true };
+          if (criterion.value.toLowerCase() === 'active') return { optOut: false };
+          return null;
+        }
+
+        if (criterion.operator === 'equals') {
+          return {
+            [criterion.field]: {
+              equals: criterion.value,
+              mode: 'insensitive',
+            },
+          };
+        }
+
+        if (criterion.operator === 'contains') {
+          return {
+            [criterion.field]: {
+              contains: criterion.value,
+              mode: 'insensitive',
+            },
+          };
+        }
+
+        // Default to contains if operator is unknown
+        return {
+          [criterion.field]: {
+            contains: criterion.value,
+            mode: 'insensitive',
+          },
+        };
+      })
+      .filter((condition): condition is Record<string, any> => condition !== null);
+
+    if (mapped.length === 0) {
+      return whereClause;
+    }
+
+    return {
+      ...whereClause,
+      [logic]: mapped,
+    };
+  }
+
+  private normalizeSegmentCriteria(raw: unknown): SegmentCriteriaPayload {
+    const fallback: SegmentCriteriaPayload = { logic: 'AND', rules: [] };
+    if (!raw || typeof raw !== 'object') return fallback;
+
+    const obj = raw as { logic?: unknown; rules?: unknown };
+    const logic: SegmentLogic = obj.logic === 'OR' ? 'OR' : 'AND';
+    const rules = Array.isArray(obj.rules)
+      ? obj.rules
+          .map((rule) => {
+            if (!rule || typeof rule !== 'object') return null;
+            const r = rule as {
+              field?: unknown;
+              operator?: unknown;
+              value?: unknown;
+            };
+
+            const field =
+              r.field === 'tag' ||
+              r.field === 'status' ||
+              r.field === 'email' ||
+              r.field === 'phone' ||
+              r.field === 'firstName' ||
+              r.field === 'lastName'
+                ? r.field
+                : null;
+            if (!field) return null;
+
+            const operator: 'equals' | 'contains' = r.operator === 'contains' ? 'contains' : 'equals';
+            const value = typeof r.value === 'string' ? r.value : '';
+
+            return { field, operator, value } satisfies SegmentCriterion;
+          })
+          .filter((rule): rule is SegmentCriterion => rule !== null)
+      : [];
+
+    return { logic, rules };
+  }
+
+  /**
+   * Liste des contacts avec pagination cursor-based (RG-53, RG-54)
+   * Performance: supporte 1M+ contacts par compte sans dégradation
+   */
+  async findAll(accountId: string, params: {
+    cursor?: string;
+    limit?: number;
+    search?: string;
+    location?: string;
+    tag?: string;
+    dateAddedFrom?: string;
+    dateAddedTo?: string;
+  }) {
+    const limit = Math.min(params.limit || 20, 100); // Max 100 par page
+    const { cursor, search, location, tag, dateAddedFrom, dateAddedTo } = params;
+
+    // Construire le where clause avec isolation accountId (RG-13)
+    const where: any = { accountId };
+
+    if (search) {
+      where.OR = [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search } },
+      ];
+    }
+
+    if (location) where.location = location;
+    if (tag) where.tags = { array_contains: [tag] };
+    if (dateAddedFrom) where.createdAt = { ...where.createdAt, gte: new Date(dateAddedFrom) };
+    if (dateAddedTo) where.createdAt = { ...where.createdAt, lte: new Date(dateAddedTo) };
+
+    // Cursor-based pagination (plus performant que OFFSET pour grandes tables)
+    const contacts = await this.prisma.contact.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1, // Fetch one extra to determine if hasMore
+      cursor: cursor ? { id: cursor } : undefined,
+      skip: cursor ? 1 : 0, // Skip the cursor itself
+    });
+
+    // Déterminer s'il y a plus de pages
+    let nextCursor: string | null = null;
+    if (contacts.length > limit) {
+      const nextItem = contacts.pop();
+      nextCursor = nextItem?.id || null;
+    }
+
+    return {
+      data: contacts,
+      nextCursor,
+      total: await this.prisma.contact.count({ where }), // Optionnel: compter seulement si nécessaire
+    };
+  }
+
+  /**
+   * Récupère un contact par `id` en s'assurant de l'isolation par `accountId`.
+   * Retourne `null` si le contact n'appartient pas au compte ou n'existe pas.
+   */
+  async findById(accountId: string, id: string) {
+    const contact = await this.prisma.contact.findFirst({ where: { id, accountId } });
+    if (!contact) return null;
+
+    const history = (await this.getHistory(accountId, id)) || [];
+    const notes = history
+      .filter((event) => event.type === 'note')
+      .map((event) => ({ id: event.id, content: event.message, createdAt: event.createdAt }));
+
+    const tags = Array.isArray(contact.tags) ? contact.tags : [];
+
+    return {
+      ...contact,
+      tags,
+      history,
+      notes,
+    };
+  }
+
+  async addNote(accountId: string, id: string, note: string) {
+    const contact = await this.prisma.contact.findFirst({ where: { id, accountId } });
+    if (!contact) return null;
+
+    const created = await this.prisma.auditLog.create({
+      data: {
+        accountId,
+        action: 'contact_note_added',
+        details: {
+          contactId: id,
+          note,
+        },
+      },
+    });
+
+    return {
+      id: created.id,
+      content: note,
+      createdAt: created.createdAt,
+    };
+  }
+
+  async getHistory(accountId: string, id: string) {
+    const contact = await this.prisma.contact.findFirst({ where: { id, accountId } });
+    if (!contact) return null;
+
+    const [sends, analytics, logs] = await Promise.all([
+      this.prisma.send.findMany({
+        where: { contactId: id },
+        select: {
+          id: true,
+          status: true,
+          sentAt: true,
+          openedAt: true,
+          clickedAt: true,
+        },
+      }),
+      this.prisma.analytic.findMany({
+        where: { contactId: id },
+        select: {
+          id: true,
+          action: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.auditLog.findMany({
+        where: {
+          accountId,
+          action: 'contact_note_added',
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+    ]);
+
+    const sendEvents: ContactHistoryEvent[] = sends
+      .map((send) => {
+        const when = send.clickedAt || send.openedAt || send.sentAt;
+        if (!when) return null;
+
+        return {
+          id: `send-${send.id}`,
+          type: 'send',
+          message: `Envoi: ${send.status}`,
+          createdAt: when,
+        };
+      })
+      .filter((event): event is ContactHistoryEvent => event !== null);
+
+    const analyticEvents: ContactHistoryEvent[] = analytics
+      .filter((analytic) => !!analytic.createdAt)
+      .map((analytic) => ({
+        id: `analytic-${analytic.id}`,
+        type: 'analytics',
+        message: `Action: ${analytic.action || 'unknown'}`,
+        createdAt: analytic.createdAt as Date,
+      }));
+
+    const noteEvents: ContactHistoryEvent[] = logs
+      .map((log) => {
+        const details = log.details as { contactId?: string; note?: string } | null;
+        if (!details || details.contactId !== id || !details.note) return null;
+
+        return {
+          id: `note-${log.id}`,
+          type: 'note',
+          message: details.note,
+          createdAt: log.createdAt,
+        };
+      })
+      .filter((event): event is ContactHistoryEvent => event !== null);
+
+    return [...noteEvents, ...sendEvents, ...analyticEvents].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
+  }
+
+  /**
+   * After a contact is created/updated/deleted, we need to recalculate affected segments
+   */
+  private async triggerSegmentRecalculation(accountId: string) {
+    try {
+      // Add a job to recalculate all segments for this account
+      await this.segmentRecalculationService.addRecalculateAccountSegmentsJob(accountId);
+      this.logger.log(`Queued segment recalculation for account ${accountId}`);
+    } catch (error) {
+      this.logger.error(
+        \`Failed to queue segment recalculation for account \${accountId}: \${error.message}\`,
+        error.stack,
+      );
+    }
+  }
+
+  async optOut(accountId: string, id: string) {
+    const contact = await this.prisma.contact.findFirst({ where: { id, accountId } });
+    if (!contact) return null;
+
+    const updated = await this.prisma.contact.update({ where: { id }, data: { optOut: true } });
+
+    await this.prisma.auditLog.create({
+      data: {
+        accountId,
+        action: 'contact_opt_out',
+        details: { contactId: id },
+      },
+    });
+
+    return updated;
+  }
+
+  async remove(accountId: string, id: string) {
+    const contact = await this.prisma.contact.findFirst({ where: { id, accountId } });
+    if (!contact) return null;
+
+    await this.prisma.auditLog.create({
+      data: {
+        accountId,
+        action: 'contact_deleted',
+        details: { contactId: id, email: contact.email, phone: contact.phone },
+      },
+    });
+
+    await this.prisma.contact.delete({ where: { id } });
+    
+    // Trigger segment recalculation since a contact was removed
+    await this.triggerSegmentRecalculation(accountId);
+    
+    return { success: true };
+  }
+
+  /**
+   * Creates a new contact and triggers segment recalculation
+   */
+  async create(accountId: string, data: any) {
+    const contact = await this.prisma.contact.create({
+      data: {
+        accountId,
+        email: data.email,
+        phone: data.phone,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        location: data.location,
+        tags: data.tags || [],
+        optOut: data.optOut || false,
+      },
+    });
+
+    // Trigger segment recalculation since a new contact was added
+    await this.triggerSegmentRecalculation(accountId);
+
+    return contact;
+  }
+
+  /**
+   * Updates a contact and triggers segment recalculation if relevant fields changed
+   */
+  async update(accountId: string, id: string, data: any) {
+    const contact = await this.prisma.contact.findFirst({ where: { id, accountId } });
+    if (!contact) return null;
+
+    const updated = await this.prisma.contact.update({
+      where: { id },
+      data: {
+        email: data.email ?? undefined,
+        phone: data.phone ?? undefined,
+        firstName: data.firstName ?? undefined,
+        lastName: data.lastName ?? undefined,
+        location: data.location ?? undefined,
+        tags: data.tags ?? undefined,
+        optOut: data.optOut ?? undefined,
+      },
+    });
+
+    // Trigger segment recalculation if fields that affect segments were changed
+    const fieldsThatAffectSegments = ['location', 'tags', 'optOut', 'firstName', 'lastName'];
+    const hasChangedRelevantFields = fieldsThatAffectSegments.some(
+      field => data[field] !== undefined && data[field] !== contact[field]
+    );
+
+    if (hasChangedRelevantFields) {
+      await this.triggerSegmentRecalculation(accountId);
+    }
+
+    return updated;
+  }
+
+  async exportOne(accountId: string, id: string): Promise<ContactExportPayload | null> {
+    const contact = await this.findById(accountId, id);
+    if (!contact) {
+      return null;
+    }
+
+    return {
+      id: contact.id,
+      accountId: contact.accountId,
+      email: contact.email,
+      phone: contact.phone,
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      tags: Array.isArray(contact.tags)
+        ? contact.tags.filter((tag): tag is string => typeof tag === 'string')
+        : [],
+      createdAt: contact.createdAt,
+      optOut: contact.optOut,
+      notes: Array.isArray((contact as any).notes) ? (contact as any).notes : [],
+      history: Array.isArray((contact as any).history) ? (contact as any).history : [],
+    };
+  }
+
+  async previewSegment(
+    accountId: string,
+    payload: {
+      logic: SegmentLogic;
+      criteria: SegmentCriterion[];
+    },
+  ) {
+    // Validate the criteria before processing
+    if (!payload.criteria || !Array.isArray(payload.criteria) || payload.criteria.length === 0) {
+      return { count: 0 };
+    }
+
+    // Create a cache key that includes the account ID for proper isolation
+    const key = 'segments:preview:' + accountId + ':' + encodeURIComponent(JSON.stringify(payload));
+
+    try {
+      const cached = await redisConnection.get(key);
+      if (cached) {
+        return { count: parseInt(cached, 10) };
+      }
+    } catch (err) {
+      // Ignore cache errors - fallback to DB
+      console.warn('Redis preview cache error: ' + (err?.message || err));
+    }
+
+    // Apply tenant isolation by passing the account ID
+    const where = this.buildWhereForSegment(accountId, payload.logic, payload.criteria);
+    const count = await this.prisma.contact.count({ where });
+
+    try {
+      // TTL 30 seconds
+      await redisConnection.set(key, String(count), 'EX', 30);
+    } catch (err) {
+      // Ignore cache set errors
+    }
+
+    return { count };
+  }
+
+  async listSegments(accountId: string) {
+    // Apply tenant isolation
+    const segments = await this.prisma.segment.findMany({
+      where: { accountId },
+      orderBy: { id: 'desc' },
+    });
+
+    const now = Date.now();
+    const staleThresholdMs = 5 * 60 * 1000; // 5 minutes
+
+    for (const segment of segments) {
+      if (segment.type !== 'dynamic') continue;
+      
+      const last = segment.lastCalculated?.getTime() || 0;
+      if (now - last < staleThresholdMs) continue;
+
+      try {
+        const parsed = this.normalizeSegmentCriteria(segment.criteria);
+        // Apply tenant isolation when recalculating
+        const where = this.buildWhereForSegment(accountId, parsed.logic, parsed.rules);
+        const freshCount = await this.prisma.contact.count({ where });
+
+        await this.prisma.segment.update({
+          where: { id: segment.id },
+          data: {
+            contactCount: freshCount,
+            lastCalculated: new Date(),
+          },
+        });
+
+        segment.contactCount = freshCount;
+        segment.lastCalculated = new Date();
+      } catch (error) {
+        console.error(`Failed to recalculate segment ${segment.id}:`, error);
+      }
+    }
+
+    return segments;
+  }
+
+  async createSegment(
+    accountId: string,
+    payload: {
+      name: string;
+      logic: SegmentLogic;
+      criteria: SegmentCriterion[];
+    },
+  ) {
+    // Apply tenant isolation when counting
+    const where = this.buildWhereForSegment(accountId, payload.logic, payload.criteria);
+    const count = await this.prisma.contact.count({ where });
+
+    // Create segment with tenant isolation
+    const segment = await this.prisma.segment.create({
+      data: {
+        accountId,
+        name: payload.name,
+        type: 'dynamic',
+        criteria: {
+          logic: payload.logic,
+          rules: payload.criteria,
+        },
+        contactCount: count,
+        lastCalculated: new Date(),
+      },
+    });
+
+    return segment;
+  }
+
+  // Prisma listener for automatic recalculation of segment counts
+  async setupSegmentRecalculationListener() {
+    // Set up a listener for contact changes that could affect segment counts
+    // Note: Prisma doesn't have built-in hooks, so we'll need to manually trigger updates
+    // after contact creation/deletion/updates
+  }
+
+  // Method to recalculate all dynamic segments for an account
+  async recalculateAccountSegments(accountId: string) {
+    const segments = await this.prisma.segment.findMany({
+      where: { 
+        accountId,
+        type: 'dynamic'
+      }
+    });
+
+    for (const segment of segments) {
+      try {
+        const parsed = this.normalizeSegmentCriteria(segment.criteria);
+        const where = this.buildWhereForSegment(accountId, parsed.logic, parsed.rules);
+        const freshCount = await this.prisma.contact.count({ where });
+
+        await this.prisma.segment.update({
+          where: { id: segment.id },
+          data: {
+            contactCount: freshCount,
+            lastCalculated: new Date(),
+          },
+        });
+      } catch (error) {
+        console.error(`Failed to recalculate segment ${segment.id}:`, error);
+      }
+    }
+  }
+}
+

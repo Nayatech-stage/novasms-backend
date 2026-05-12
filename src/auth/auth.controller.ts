@@ -7,16 +7,13 @@ import {
   Get,
   Param,
   UseGuards,
-  Request,
   BadRequestException,
 } from '@nestjs/common';
-import type { Request as ExpressRequest } from 'express';
-
-type JwtUser = { accountId: string; email: string; role?: string };
 import { AuthService } from './auth.service';
 import { ApiOperation, ApiBody, ApiTags, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { RegisterDto } from './dto/register.dto';
+import { Tenant } from '../common/decorators/tenant.decorator';
 
 @ApiTags('Authentification')
 @Controller('auth')
@@ -67,13 +64,31 @@ export class AuthController {
   @Post('onboarding/complete')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Marquer l'onboarding comme complété" })
-  async markOnboardingCompleted(
-    @Request() req: ExpressRequest & { user?: JwtUser },
+  async markOnboardingCompleted(@Tenant() accountId: string | null) {
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+    return this.authService.markOnboardingCompleted(accountId);
+  }
+
+  @Post('profile')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Persister le profil initial du wizard' })
+  async updateProfile(
+    @Tenant() accountId: string | null,
+    @Body()
+    body: {
+      companyName: string;
+      role?: string;
+      sector?: string;
+      primaryChannels?: string[];
+    },
   ) {
-    // req.user contient accountId grâce au JwtStrategy
-    const user = req.user;
-    if (!user) throw new BadRequestException('Utilisateur non authentifié');
-    return this.authService.markOnboardingCompleted(user.accountId);
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+
+    return this.authService.updateProfile(accountId, body);
   }
 
   @Post('verify-2fa')
@@ -88,53 +103,56 @@ export class AuthController {
   @Post('generate-2fa-secret')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Générer un secret TOTP pour l'enrôlement 2FA" })
-  async generateTwoFactorSecret(
-    @Request() req: ExpressRequest & { user?: JwtUser },
-  ) {
-    const user = req.user;
-    if (!user) throw new BadRequestException('Utilisateur non authentifié');
-    return this.authService.generateTwoFactorSecret(user.accountId);
+  async generateTwoFactorSecret(@Tenant() accountId: string | null) {
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+    return this.authService.generateTwoFactorSecret(accountId);
   }
 
   @Post('enable-2fa')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Activer la 2FA (TOTP) pour un compte' })
   async enableTwoFactor(
-    @Request() req: ExpressRequest & { user?: JwtUser },
+    @Tenant() accountId: string | null,
     @Body() body: { code: string },
   ) {
-    const user = req.user;
-    if (!user) throw new BadRequestException('Utilisateur non authentifié');
-    return this.authService.enableTwoFactor(user.accountId, body.code);
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+    return this.authService.enableTwoFactor(accountId, body.code);
   }
 
   @Post('disable-2fa')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Désactiver la 2FA pour un compte' })
-  async disableTwoFactor(@Request() req: ExpressRequest & { user?: JwtUser }) {
-    const user = req.user;
-    if (!user) throw new BadRequestException('Utilisateur non authentifié');
-    return this.authService.disableTwoFactor(user.accountId);
+  async disableTwoFactor(@Tenant() accountId: string | null) {
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+    return this.authService.disableTwoFactor(accountId);
   }
 
   @Post('send-2fa-sms')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Envoyer un code 2FA par SMS (placeholder)' })
   async sendTwoFactorSms(
-    @Request() req: ExpressRequest & { user?: JwtUser },
+    @Tenant() accountId: string | null,
     @Body() body: { phone?: string },
   ) {
-    const user = req.user;
-    if (!user) throw new BadRequestException('Utilisateur non authentifié');
-    return this.authService.sendTwoFactorSms(user.accountId, body.phone);
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+    return this.authService.sendTwoFactorSms(accountId, body.phone);
   }
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Récupérer les informations du compte courant' })
-  async me(@Request() req: ExpressRequest & { user?: JwtUser }) {
-    const user = req.user;
-    if (!user) throw new BadRequestException('Utilisateur non authentifié');
-    return this.authService.getAccount(user.accountId);
+  async me(@Tenant() accountId: string | null) {
+    if (!accountId) {
+      throw new BadRequestException('Utilisateur non authentifié');
+    }
+    return this.authService.getAccount(accountId);
   }
 }
