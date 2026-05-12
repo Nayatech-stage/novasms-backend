@@ -5,6 +5,18 @@ import type { Job } from 'bull';
 import { PrismaService } from '../prisma/prisma.service';
 import { ContactsService } from '../contacts/contacts.service';
 
+const toError = (error: unknown): Error => {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  if (typeof error === 'string') {
+    return new Error(error);
+  }
+
+  return new Error('Unknown error');
+};
+
 export interface SegmentRecalculationJob {
   segmentId: string;
   accountId: string;
@@ -83,11 +95,12 @@ export class SegmentRecalculationProcessor {
 
       return { success: true, count, segmentId };
     } catch (error) {
+      const err = toError(error);
       this.logger.error(
-        'Failed to recalculate segment ' + segmentId + ': ' + error.message,
-        error.stack,
+        'Failed to recalculate segment ' + segmentId + ': ' + err.message,
+        err.stack,
       );
-      throw error;
+      throw err;
     }
   }
 
@@ -142,14 +155,12 @@ export class SegmentRecalculationProcessor {
 
           results.push({ segmentId: segment.id, count });
         } catch (error) {
+          const err = toError(error);
           this.logger.error(
-            'Failed to recalculate segment ' +
-              segment.id +
-              ': ' +
-              error.message,
-            error.stack,
+            `Failed to recalculate segment ${segment.id}: ${err.message}`,
+            err.stack,
           );
-          results.push({ segmentId: segment.id, error: error.message });
+          results.push({ segmentId: segment.id, error: err.message });
         }
       }
 
@@ -162,14 +173,15 @@ export class SegmentRecalculationProcessor {
 
       return { success: true, results, accountId };
     } catch (error) {
+      const err = toError(error);
       this.logger.error(
         'Failed to recalculate account segments for ' +
           accountId +
           ': ' +
-          error.message,
-        error.stack,
+          err.message,
+        err.stack,
       );
-      throw error;
+      throw err;
     }
   }
 }
