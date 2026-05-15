@@ -1,5 +1,5 @@
 import { Body, Controller, Post, Request, Get, Param } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CampaignsService } from './campaigns.service';
 import type { Request as ExpressRequest } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -15,10 +15,13 @@ export class CampaignsController {
   constructor(private campaignsService: CampaignsService) {}
 
   @Post()
-  async create(@Body() body: any, @Request() req: TenantRequest) {
+  async create(@Body() body: unknown, @Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new Error('accountId manquant');
-    return this.campaignsService.create(accountId, body);
+    return this.campaignsService.create(
+      accountId,
+      body as Record<string, unknown>,
+    );
   }
 
   @Get()

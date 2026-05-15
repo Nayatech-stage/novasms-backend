@@ -4,6 +4,7 @@ import {
   Body,
   Controller,
   Delete,
+  Patch,
   Get,
   HttpCode,
   HttpStatus,
@@ -129,6 +130,30 @@ export class ContactsController {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     return this.contactsService.create(accountId, body);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Mettre a jour un contact' })
+  async update(
+    @Param('id') id: string,
+    @Body() body: ContactUpdateBody,
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    const updated = await this.contactsService.update(accountId, id, body);
+    if (!updated) throw new NotFoundException('Contact non trouve');
+    return updated;
+  }
+
+  @Post(':id/opt-out')
+  @ApiOperation({ summary: 'Desabonner un contact (opt-out)' })
+  @HttpCode(HttpStatus.OK)
+  async optOut(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    await this.contactsService.optOut(accountId, id);
+    return { success: true };
   }
 
   @Delete(':id')

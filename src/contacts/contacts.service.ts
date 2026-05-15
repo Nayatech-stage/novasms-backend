@@ -197,6 +197,45 @@ export class ContactsService {
     return { success: true };
   }
 
+  async update(accountId: string, id: string, data: any) {
+    const existing = await this.prisma.contact.findFirst({
+      where: { id, accountId },
+    });
+    if (!existing) return null;
+    const payload: any = {};
+    if (data.firstName !== undefined) payload.firstName = data.firstName;
+    if (data.lastName !== undefined) payload.lastName = data.lastName;
+    if (data.email !== undefined) payload.email = data.email;
+    if (data.phone !== undefined) payload.phone = data.phone;
+    if (data.location !== undefined) payload.location = data.location;
+    if (data.tags !== undefined) payload.tags = data.tags;
+    if (data.optOut !== undefined) payload.optOut = data.optOut;
+
+    const updated = await this.prisma.contact.update({
+      where: { id },
+      data: payload,
+    });
+    this.segmentRecalculationService
+      .addRecalculateAccountSegmentsJob(accountId)
+      .catch(() => {});
+    return updated;
+  }
+
+  async optOut(accountId: string, id: string) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id, accountId },
+    });
+    if (!contact) return null;
+    const updated = await this.prisma.contact.update({
+      where: { id },
+      data: { optOut: true },
+    });
+    this.segmentRecalculationService
+      .addRecalculateAccountSegmentsJob(accountId)
+      .catch(() => {});
+    return updated;
+  }
+
   // ✅ CORRECTION: Ajouter try-catch pour éviter les 500
   async previewSegment(
     accountId: string,
