@@ -354,4 +354,97 @@ export class ContactsService {
     if (!s) return null;
     return this.prisma.segment.delete({ where: { id } });
   }
+
+  /**
+   * Compter les contacts actifs d'un segment
+   */
+  async countSegmentContacts(
+    accountId: string,
+    segmentId?: string,
+  ): Promise<number> {
+    try {
+      if (!segmentId) {
+        // Pas de segment → tous les contacts actifs
+        return this.prisma.contact.count({
+          where: {
+            accountId,
+            optOut: false,
+          },
+        });
+      }
+
+      // Récupérer le segment
+      const segment = await this.prisma.segment.findUnique({
+        where: { id: segmentId },
+      });
+
+      if (!segment || segment.accountId !== accountId) {
+        throw new Error('Segment not found');
+      }
+
+      // Utiliser le contactCount déjà calculé (mis à jour par le service de recalculation)
+      return segment.contactCount || 0;
+    } catch (error) {
+      this.logger.error(
+        `Erreur lors du comptage des contacts: ${String(error)}`,
+      );
+      return 0;
+    }
+  }
+
+  /**
+   * Récupérer les vrais contacts d'un segment pour envoi
+   */
+  async getSegmentContactsForCampaign(
+    accountId: string,
+    segmentId?: string,
+  ): Promise<any[]> {
+    try {
+      if (!segmentId) {
+        // Tous les contacts actifs
+        return this.prisma.contact.findMany({
+          where: {
+            accountId,
+            optOut: false,
+          },
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            firstName: true,
+            lastName: true,
+          },
+        });
+      }
+
+      // Récupérer segment et construire le where
+      const segment = await this.prisma.segment.findUnique({
+        where: { id: segmentId },
+      });
+
+      if (!segment || segment.accountId !== accountId) {
+        throw new Error('Segment not found');
+      }
+
+      const criteria = (segment.criteria as any)?.rules || [];
+      const logic = (segment.criteria as any)?.logic || 'AND';
+      const where = this.buildWhereForSegment(accountId, logic, criteria);
+
+      return this.prisma.contact.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          phone: true,
+          firstName: true,
+          lastName: true,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Erreur lors de la récupération des contacts: ${String(error)}`,
+      );
+      return [];
+    }
+  }
 }

@@ -1,31 +1,33 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
-import { PrismaModule } from './prisma/prisma.module';
-import { CampaignsModule } from './campaigns/campaigns.module';
-import { AuthModule } from './auth/auth.module';
-import { ContactsModule } from './contacts/contacts.module';
-import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
+import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule'; // ✅ Ajouter cet import
+import { BullModule } from '@nestjs/bullmq';
+import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './auth/auth.module';
+import { MailModule } from './mail/mail.module';
+import { ContactsModule } from './contacts/contacts.module';
+import { CampaignsModule } from './campaigns/campaigns.module';
+import { WebhookModule } from './webhooks/webhook.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
+    BullModule.forRoot({
+      connection: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+      },
+    }),
     PrismaModule,
     AuthModule,
+    MailModule,
     ContactsModule,
-    // Campaigns module for Sprint 3
     CampaignsModule,
+    WebhookModule,
   ],
-  providers: [
-    {
-      provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: TenantInterceptor,
-    },
-  ],
+  providers: [{ provide: APP_INTERCEPTOR, useClass: TenantInterceptor }],
 })
 export class AppModule {}

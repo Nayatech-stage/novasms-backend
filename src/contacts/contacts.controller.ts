@@ -101,7 +101,7 @@ export class ContactsController {
       })
       .filter((r: any) => r.email || r.phone);
 
-    const result = await this.importService.processFullImport(
+    const result = await this.importService.startImport(
       accountId,
       body.fileName,
       mappedRows,
@@ -109,8 +109,8 @@ export class ContactsController {
     return {
       success: true,
       jobId: result.jobId,
-      status: result.status,
-      report: result.report,
+      message: result.message,
+      estimatedTime: result.estimatedTime,
     };
   }
 
@@ -269,5 +269,32 @@ export class ContactsController {
       segmentId: id,
     });
     return { success: true };
+  }
+
+  @Get('segments/:id/count')
+  @ApiOperation({ summary: "Compter contacts actifs d'un segment" })
+  async countSegmentContacts(
+    @Param('id') segmentId: string,
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+
+    try {
+      const count = await this.contactsService.countSegmentContacts(
+        accountId,
+        segmentId,
+      );
+      return {
+        segmentId,
+        count,
+        message: `${count} contact(s) actif(s) dans ce segment`,
+      };
+    } catch (error) {
+      throw new BadRequestException({
+        message: 'Erreur lors du comptage',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
   }
 }

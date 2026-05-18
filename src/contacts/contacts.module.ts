@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bull';
+import { BullModule } from '@nestjs/bullmq';
 import { ImportService } from './import.service';
 import { ContactsController } from './contacts.controller';
 import { ContactsService } from './contacts.service';
@@ -11,10 +11,6 @@ import { PrismaService } from '../prisma/prisma.service';
   imports: [
     BullModule.registerQueue({
       name: 'segment-recalculation',
-      redis: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-      },
     }),
   ],
   controllers: [ContactsController],
@@ -25,6 +21,6 @@ import { PrismaService } from '../prisma/prisma.service';
     SegmentRecalculationService,
     PrismaService,
   ],
-  exports: [ContactsService],
+  exports: [ContactsService, ImportService],
 })
 export class ContactsModule {}

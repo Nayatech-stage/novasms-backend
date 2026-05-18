@@ -6,9 +6,35 @@
 
 */
 -- AlterTable
-ALTER TABLE "accounts" DROP COLUMN "primaryChannels",
-DROP COLUMN "sector",
-ADD COLUMN     "twoFactorEnabled" BOOLEAN NOT NULL DEFAULT false;
+DO $$
+BEGIN
+  -- Drop seulement si les colonnes existent (shadow DB)
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'accounts' AND column_name = 'primaryChannels'
+  ) THEN
+    ALTER TABLE "accounts" DROP COLUMN "primaryChannels";
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'accounts' AND column_name = 'sector'
+  ) THEN
+    ALTER TABLE "accounts" DROP COLUMN "sector";
+  END IF;
+
+  -- Add seulement si la colonne n'existe pas
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_name = 'accounts' AND column_name = 'twoFactorEnabled'
+  ) THEN
+    ALTER TABLE "accounts"
+      ADD COLUMN "twoFactorEnabled" BOOLEAN NOT NULL DEFAULT false;
+  END IF;
+END $$;
 
 -- AlterTable
 ALTER TABLE "segments" ADD COLUMN     "contactCount" INTEGER NOT NULL DEFAULT 0;

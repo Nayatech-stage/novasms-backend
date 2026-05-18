@@ -10,10 +10,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { ApiOperation, ApiBody, ApiTags, ApiParam } from '@nestjs/swagger';
+import { ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import type { RegisterDto } from './dto/register.dto';
 import { Tenant } from '../common/decorators/tenant.decorator';
+import { ForgotPasswordSchema } from './dto/forgot-password.dto';
+import { ResetPasswordSchema } from './dto/reset-password.dto';
 
 @ApiTags('Authentification')
 @Controller('auth')
@@ -43,27 +45,35 @@ export class AuthController {
     return this.authService.resendConfirmationEmail(body.email);
   }
 
-  // ✅ ENDPOINT LOGIN
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Connexion utilisateur (Email/Mdp)' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        email: { type: 'string', example: 'contact@boutique.ci' },
-        motDePasse: { type: 'string', example: 'MonMotDePasse123!' },
-      },
-    },
-  })
   async login(@Body() body: { email: string; motDePasse: string }) {
     return this.authService.login(body.email, body.motDePasse);
   }
 
-  // ✅ NOUVEL ENDPOINT — Marquer onboarding comme complété
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Demande de réinitialisation du mot de passe' })
+  async forgotPassword(@Body() body: { email: string }) {
+    ForgotPasswordSchema.parse(body);
+    return this.authService.requestPasswordReset(body.email);
+  }
+
+  @Post('reset-password/:token')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Réinitialiser le mot de passe (token fourni)' })
+  async resetPassword(
+    @Param('token') token: string,
+    @Body() body: { newPassword: string },
+  ) {
+    ResetPasswordSchema.parse({ token, newPassword: body.newPassword });
+    return this.authService.resetPassword(token, body.newPassword);
+  }
+
   @Post('onboarding/complete')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: "Marquer l'onboarding comme complété" })
+  @ApiOperation({ summary: 'Marquer onboarding comme complété' })
   async markOnboardingCompleted(@Tenant() accountId: string | null) {
     if (!accountId) {
       throw new BadRequestException('Utilisateur non authentifié');
@@ -87,7 +97,6 @@ export class AuthController {
     if (!accountId) {
       throw new BadRequestException('Utilisateur non authentifié');
     }
-
     return this.authService.updateProfile(accountId, body);
   }
 
@@ -102,7 +111,7 @@ export class AuthController {
 
   @Post('generate-2fa-secret')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: "Générer un secret TOTP pour l'enrôlement 2FA" })
+  @ApiOperation({ summary: 'Générer un secret TOTP pour l’enrôlement 2FA' })
   async generateTwoFactorSecret(@Tenant() accountId: string | null) {
     if (!accountId) {
       throw new BadRequestException('Utilisateur non authentifié');

@@ -11,6 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import { RegisterDto } from './dto/register.dto';
 import { v4 as uuidv4 } from 'uuid';
 import * as speakeasy from 'speakeasy';
+import { UserRole } from '@prisma/client'; // ✅ Import de l'enum Prisma
 
 const LOGIN_LOCK_THRESHOLD = 5;
 const LOGIN_LOCK_MINUTES = 15;
@@ -30,7 +31,6 @@ type AuthAccount = {
   twoFactorCodeExpiry: Date | null;
   twoFactorSecret: string | null;
   backupCodes?: string[];
-  // ✅ NOUVEAUX CHAMPS pour Wizard + RBAC + Multi-tenant
   onboardingCompleted: boolean;
 };
 
@@ -39,7 +39,7 @@ type AuthUser = {
   accountId: string;
   email: string;
   passwordHash: string;
-  role: string;
+  role: UserRole; // ✅ Type enum Prisma
   twoFactorEnabled: boolean;
 };
 
@@ -68,7 +68,6 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(data.motDePasse, 12);
-
     const token = uuidv4();
     const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
@@ -82,7 +81,7 @@ export class AuthService {
         confirmationToken: token,
         tokenExpiry: expiry,
         emailVerified: false,
-        onboardingCompleted: false, // ✅ Valeur par défaut
+        onboardingCompleted: false,
       },
     });
 
@@ -95,12 +94,13 @@ export class AuthService {
       throw new BadRequestException('Account creation failed');
     }
 
+    // ✅ Correction: utiliser UserRole.Admin au lieu de 'admin'
     await this.prisma.user.create({
       data: {
         accountId: createdAccount.id,
         email: data.email,
         passwordHash: hashedPassword,
-        role: 'admin',
+        role: UserRole.Admin, // ✅ Enum Prisma
         twoFactorEnabled: false,
       },
     });
@@ -403,18 +403,78 @@ export class AuthService {
         role: primaryUser.role,
         sector: authAccount.sector,
         primaryChannels: authAccount.primaryChannels,
-        onboardingCompleted: authAccount.onboardingCompleted, // ✅ Pour redirection frontend
+        onboardingCompleted: authAccount.onboardingCompleted,
       },
     };
   }
 
-  // ✅ NOUVELLE MÉTHODE — Marquer onboarding comme complété
   async markOnboardingCompleted(accountId: string) {
     await this.prisma.account.update({
       where: { id: accountId },
       data: { onboardingCompleted: true },
     });
     return { success: true, message: 'Onboarding marked as completed' };
+  }
+
+  // ✅ Reset password (US-002)
+  async requestPasswordReset(email: string) {
+    if (!email) {
+      throw new BadRequestException('Email requis');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { adminEmail: email },
+      select: { id: true, adminEmail: true },
+    });
+
+    if (!account) {
+      return {
+        success: true,
+        message: 'Si le compte existe, un email sera envoyé.',
+      };
+    }
+
+    const token = uuidv4();
+    const expiry = new Date(Date.now() + 60 * 60 * 1000);
+
+    await this.prisma.account.update({
+      where: { id: account.id },
+      data: { resetPasswordToken: token, resetPasswordExpiry: expiry },
+    });
+
+    await this.mail.sendPasswordResetEmail(account.adminEmail, token);
+
+    return { success: true, message: 'Email de réinitialisation envoyé.' };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    if (!token) {
+      throw new BadRequestException('Token requis');
+    }
+
+    const account = await this.prisma.account.findFirst({
+      where: {
+        resetPasswordToken: token,
+        resetPasswordExpiry: { gte: new Date() },
+      },
+    });
+
+    if (!account) {
+      throw new UnauthorizedException('Token invalide ou expiré');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    await this.prisma.account.update({
+      where: { id: account.id },
+      data: {
+        passwordHash: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpiry: null,
+      },
+    });
+
+    return { success: true, message: 'Mot de passe réinitialisé avec succès.' };
   }
 
   async updateProfile(
@@ -433,7 +493,8 @@ export class AuthService {
       throw new BadRequestException('Company name required');
     }
 
-    const normalizedRole = this.normalizeRole(profile.role);
+    // ✅ Correction: normaliser le rôle en enum UserRole
+    const normalizedRole = this.normalizeRoleToEnum(profile.role);
 
     const accountSnapshot = await this.prisma.account.findUnique({
       where: { id: accountId },
@@ -450,9 +511,7 @@ export class AuthService {
 
     const account = await this.prisma.account.update({
       where: { id: accountId },
-      data: {
-        companyName,
-      },
+      data: { companyName },
       select: {
         id: true,
         adminEmail: true,
@@ -500,12 +559,11 @@ export class AuthService {
     return await bcrypt.compare(plainPassword, hash);
   }
 
-  private generateTokens(account: AuthAccount, role: string): AuthTokens {
-    // ✅ Payload enrichi pour multi-tenant + RBAC
+  private generateTokens(account: AuthAccount, role: UserRole): AuthTokens {
     const payload = {
       sub: account.id,
       email: account.adminEmail,
-      accountId: account.id, // 🔑 Isolation données entre entreprises
+      accountId: account.id,
       role,
       onboardingCompleted: account.onboardingCompleted,
     };
@@ -568,8 +626,6 @@ export class AuthService {
     });
     if (!account) throw new BadRequestException('Account not found');
 
-    /* speakeasy doesn't have strict types in this project environment; disable
-       the specific ESLint type-safety checks for this call only. */
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const secret = speakeasy.generateSecret({
       name: `NovaSMS (${account.adminEmail})`,
@@ -606,7 +662,6 @@ export class AuthService {
     const secret = account.twoFactorSecret;
     if (!secret) throw new BadRequestException('2FA secret not set');
 
-    // speakeasy.totp may be untyped in this environment — suppress type-safety ESLint rules here
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const ok = speakeasy.totp.verify({
       secret,
@@ -701,7 +756,6 @@ export class AuthService {
     return { success: true, message: 'Code 2FA envoyé (placeholder)' };
   }
 
-  // New helper: get account info for frontend
   async getAccount(accountId: string) {
     if (!accountId) throw new BadRequestException('accountId required');
     const account = await this.prisma.account.findUnique({
@@ -750,7 +804,7 @@ export class AuthService {
 
   private async getPrimaryUser(
     account: AuthAccount & { passwordHash?: string },
-    desiredRole?: string,
+    desiredRole?: UserRole, // ✅ Type enum
   ): Promise<AuthUser> {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: account.adminEmail },
@@ -761,10 +815,11 @@ export class AuthService {
         throw new BadRequestException('Primary user does not match account');
       }
 
+      // ✅ Correction: comparaison avec enum
       if (desiredRole && existingUser.role !== desiredRole) {
         return this.prisma.user.update({
           where: { email: account.adminEmail },
-          data: { role: desiredRole },
+          data: { role: desiredRole }, // ✅ Enum UserRole
         });
       }
 
@@ -775,44 +830,36 @@ export class AuthService {
       throw new BadRequestException('Primary user not found');
     }
 
+    // ✅ Correction: utiliser UserRole.Admin par défaut
     return this.prisma.user.create({
       data: {
         accountId: account.id,
         email: account.adminEmail,
         passwordHash: account.passwordHash,
-        role: desiredRole || 'admin',
+        role: desiredRole || UserRole.Admin, // ✅ Enum Prisma
         twoFactorEnabled: false,
       },
     });
   }
 
-  private normalizeRole(role?: string): string | undefined {
-    if (!role) {
-      return undefined;
-    }
+  // ✅ Nouvelle méthode: normaliser string → UserRole enum
+  private normalizeRoleToEnum(role?: string): UserRole | undefined {
+    if (!role) return undefined;
 
     const value = role.trim().toLowerCase();
+    if (!value) return undefined;
 
-    if (!value) {
-      return undefined;
-    }
-
-    if (value.includes('administr')) {
-      return 'admin';
-    }
-
-    if (value.includes('marketing')) {
-      return 'marketing_manager';
-    }
-
+    if (value.includes('administr')) return UserRole.Admin;
+    if (value.includes('marketing')) return UserRole.Editor; // ou créer UserRole.MarketingManager
     if (
       value.includes('boutique') ||
       value.includes('gérant') ||
       value.includes('gerant')
     ) {
-      return 'store_manager';
+      return UserRole.Editor;
     }
 
-    return value.slice(0, 20);
+    // Fallback: retourner Admin si la valeur n'est pas reconnue
+    return UserRole.Admin;
   }
 }

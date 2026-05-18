@@ -125,4 +125,174 @@ export class MailService {
       }
     }
   }
+
+  async sendPasswordResetEmail(email: string, token: string) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const resetUrl = `${frontendUrl}/reset-password/${token}`;
+
+    console.log('🔁 LIEN RESET PASSWORD EMAIL:', resetUrl);
+
+    const htmlContent = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;text-align:center">
+        <h1 style="color:#2EC80A">Réinitialiser votre mot de passe</h1>
+        <p>Votre demande de réinitialisation a été reçue.</p>
+        <a href="${resetUrl}" style="display:inline-block;background:#2EC80A;color:#fff;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;margin:20px 0">🔁 Réinitialiser</a>
+        <p style="font-size:13px;color:#666;margin-top:20px">Ou copiez ce lien : <a href="${resetUrl}" style="color:#2EC80A">${resetUrl}</a></p>
+        <p style="font-size:12px;color:#999;margin-top:20px">Ce lien expire bientôt. Si vous n’êtes pas à l’origine de cette demande, ignorez cet email.</p>
+      </div>
+    `;
+
+    if (this.transporter) {
+      try {
+        await this.transporter.sendMail({
+          from: 'NovaSMS <noreply@novasms.local>',
+          to: email,
+          subject: '🔁 Réinitialisation de votre mot de passe NovaSMS',
+          html: htmlContent,
+        });
+        this.logger.log(`Password reset email envoyé à ${email} (DEV)`);
+      } catch (error: unknown) {
+        this.logger.error(`Erreur reset password: ${(error as Error).message}`);
+      }
+      return;
+    }
+
+    if (this.resend) {
+      try {
+        await this.resend.emails.send({
+          from: 'NovaSMS <onboarding@resend.dev>',
+          to: email,
+          subject: '🔁 Réinitialisation de votre mot de passe NovaSMS',
+          html: htmlContent,
+        });
+        this.logger.log(`Password reset email envoyé à ${email} (Resend)`);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Erreur Resend reset password: ${(error as Error).message}`,
+        );
+      }
+    }
+  }
+
+  async sendCampaignSentNotification(
+    email: string,
+    payload: {
+      campaignName: string;
+      channelType: string;
+      sentAt: Date;
+    },
+  ) {
+    const sentAt = payload.sentAt.toLocaleString('fr-FR');
+    const htmlContent = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+        <h1 style="color:#2EC80A">Campagne envoyée</h1>
+        <p>Votre campagne <strong>${payload.campaignName}</strong> a été envoyée.</p>
+        <ul>
+          <li>Canal: <strong>${payload.channelType}</strong></li>
+          <li>Date d'envoi: <strong>${sentAt}</strong></li>
+        </ul>
+      </div>
+    `;
+
+    const subject = `Campagne envoyee: ${payload.campaignName}`;
+
+    if (this.transporter) {
+      try {
+        await this.transporter.sendMail({
+          from: 'NovaSMS <noreply@novasms.local>',
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+        this.logger.log(
+          `Campaign sent notification email envoye a ${email} (DEV)`,
+        );
+      } catch (error: unknown) {
+        this.logger.error(
+          `Erreur campaign notification: ${(error as Error).message}`,
+        );
+      }
+      return;
+    }
+
+    if (this.resend) {
+      try {
+        await this.resend.emails.send({
+          from: 'NovaSMS <onboarding@resend.dev>',
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+        this.logger.log(
+          `Campaign sent notification email envoye a ${email} (Resend)`,
+        );
+      } catch (error: unknown) {
+        this.logger.error(
+          `Erreur Resend campaign notification: ${(error as Error).message}`,
+        );
+      }
+    }
+  }
+
+  async sendCampaignConfirmation(
+    email: string,
+    payload: {
+      campaignName: string;
+      contactEmail: string;
+      sentAt: Date;
+      campaignId: string;
+    },
+  ) {
+    const sentAt = payload.sentAt.toLocaleString('fr-FR');
+    const htmlContent = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;border:1px solid #e0e0e0;border-radius:8px">
+        <div style="background:#2EC80A;color:white;padding:16px;border-radius:8px 8px 0 0;text-align:center;margin:-20px -20px 20px -20px">
+          <h2 style="margin:0;font-size:24px">✅ Email Confirmé</h2>
+        </div>
+        <p>Un email a été confirmé comme envoyé dans votre campagne.</p>
+        <div style="background:#f5f5f5;padding:16px;border-radius:6px;margin:16px 0">
+          <p style="margin:8px 0"><strong>Campagne:</strong> ${payload.campaignName}</p>
+          <p style="margin:8px 0"><strong>Email du contact:</strong> ${payload.contactEmail}</p>
+          <p style="margin:8px 0"><strong>Date d'envoi:</strong> ${sentAt}</p>
+          <p style="margin:8px 0"><strong>ID campagne:</strong> <code style="background:#e0e0e0;padding:4px 8px;border-radius:4px">${payload.campaignId}</code></p>
+        </div>
+        <p style="font-size:12px;color:#666;margin-top:20px">Cet email est généré automatiquement via le système de webhooks de NovaSMS. Les métriques de votre campagne seront mises à jour en temps réel.</p>
+      </div>
+    `;
+
+    const subject = `✅ Confirmation d'envoi - ${payload.campaignName}`;
+
+    if (this.transporter) {
+      try {
+        await this.transporter.sendMail({
+          from: 'NovaSMS <noreply@novasms.local>',
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+        this.logger.log(`Campaign confirmation email envoyé à ${email} (DEV)`);
+      } catch (error: unknown) {
+        this.logger.error(`Erreur confirmation: ${(error as Error).message}`);
+      }
+      return;
+    }
+
+    if (this.resend) {
+      try {
+        await this.resend.emails.send({
+          from: 'NovaSMS <onboarding@resend.dev>',
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+        this.logger.log(
+          `Campaign confirmation email envoyé à ${email} (Resend)`,
+        );
+      } catch (error: unknown) {
+        this.logger.error(
+          `Erreur Resend confirmation: ${(error as Error).message}`,
+        );
+      }
+    }
+  }
 }
