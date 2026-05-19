@@ -164,6 +164,31 @@ export class ContactsController {
     return this.contactsService.remove(accountId, id);
   }
 
+  @Get(':id/export')
+  @ApiOperation({ summary: 'Exporter un contact en CSV ou JSON' })
+  async exportContact(
+    @Param('id') id: string,
+    @Query('format') format: 'csv' | 'json' = 'csv',
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+
+    const data = await this.contactsService.exportContact(
+      accountId,
+      id,
+      format,
+    );
+    if (!data) throw new NotFoundException('Contact non trouvé');
+
+    return {
+      success: true,
+      format,
+      data,
+      fileName: `contact-${id}.${format === 'csv' ? 'csv' : 'json'}`,
+    };
+  }
+
   // --- Segments ---
   @Post('segments/preview')
   @ApiOperation({ summary: 'Apercu segment' })

@@ -236,6 +236,55 @@ export class ContactsService {
     return updated;
   }
 
+  async exportContact(
+    accountId: string,
+    id: string,
+    format: 'csv' | 'json' = 'csv',
+  ) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id, accountId },
+    });
+    if (!contact) return null;
+
+    if (format === 'json') {
+      return JSON.stringify(contact, null, 2);
+    }
+
+    // CSV Format
+    const headers = [
+      'ID',
+      'Email',
+      'Téléphone',
+      'Prénom',
+      'Nom',
+      'Localisation',
+      'Tags',
+      'Désabonné',
+      'Date création',
+    ];
+    const values = [
+      contact.id || '',
+      contact.email || '',
+      contact.phone || '',
+      contact.firstName || '',
+      contact.lastName || '',
+      contact.location || '',
+      Array.isArray(contact.tags) ? contact.tags.join(';') : '',
+      contact.optOut ? 'Oui' : 'Non',
+      new Date(contact.createdAt).toISOString(),
+    ];
+
+    // Escape CSV values
+    const escapedValues = values.map((v: string) => {
+      if (v.includes(',') || v.includes('"') || v.includes('\n')) {
+        return `"${v.replace(/"/g, '""')}"`;
+      }
+      return v;
+    });
+
+    return headers.join(',') + '\n' + escapedValues.join(',');
+  }
+
   // ✅ CORRECTION: Ajouter try-catch pour éviter les 500
   async previewSegment(
     accountId: string,
