@@ -272,30 +272,6 @@ export class ContactsController {
     }
   }
 
-  @Get('segments/:id')
-  @ApiOperation({ summary: 'Recuperer segment' })
-  async getSegment(@Param('id') id: string, @Request() req: TenantRequest) {
-    const accountId = req.accountId;
-    if (!accountId) throw new BadRequestException('accountId manquant');
-    const segments = await this.contactsService.listSegments(accountId);
-    const segment = segments.find((s: any) => s.id === id);
-    if (!segment) throw new NotFoundException('Segment non trouve');
-    return { segment };
-  }
-
-  @Delete('segments/:id')
-  @ApiOperation({ summary: 'Supprimer segment' })
-  async deleteSegment(@Param('id') id: string, @Request() req: TenantRequest) {
-    const accountId = req.accountId;
-    if (!accountId) throw new BadRequestException('accountId manquant');
-    const deleted = await this.contactsService.deleteSegment(accountId, id);
-    if (!deleted) throw new NotFoundException('Segment non trouve');
-    await this.contactsService.createAuditLog(accountId, 'segment_deleted', {
-      segmentId: id,
-    });
-    return { success: true };
-  }
-
   @Get('segments/:id/count')
   @ApiOperation({ summary: "Compter contacts actifs d'un segment" })
   async countSegmentContacts(
@@ -321,5 +297,29 @@ export class ContactsController {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }
+
+  @Get('segments/:id')
+  @ApiOperation({ summary: 'Recuperer segment' })
+  async getSegment(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    const segments = await this.contactsService.listSegments(accountId);
+    const segment = segments.find((s: any) => s.id === id);
+    if (!segment) throw new NotFoundException('Segment non trouve');
+    return { segment };
+  }
+
+  @Delete('segments/:id')
+  @ApiOperation({ summary: 'Supprimer segment' })
+  async deleteSegment(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    const deleted = await this.contactsService.deleteSegment(accountId, id);
+    if (!deleted) throw new NotFoundException('Segment non trouve');
+    await this.contactsService.createAuditLog(accountId, 'segment_deleted', {
+      segmentId: id,
+    });
+    return { success: true };
   }
 }
