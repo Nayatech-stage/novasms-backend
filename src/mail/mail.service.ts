@@ -36,6 +36,7 @@ export class MailService {
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     const verifyUrl = `${frontendUrl}/verify-email/${token}`;
     console.log('📧 LIEN DE VÉRIFICATION EMAIL:', verifyUrl);
+    const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
 
     const htmlContent = `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;text-align:center">
@@ -46,15 +47,24 @@ export class MailService {
       </div>
     `;
 
+    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const toRecipients = testRecipient ? [testRecipient] : [email];
+
+    if (testRecipient && ![email].includes(testRecipient)) {
+      this.logger.warn(
+        `TEST MODE: redirecting verification email intended for ${email} to ${testRecipient}`,
+      );
+    }
+
     if (this.transporter) {
       try {
         await this.transporter.sendMail({
-          from: 'NovaSMS <noreply@novasms.local>',
-          to: email,
+          from,
+          to: toRecipients,
           subject: '✅ Confirmez votre compte NovaSMS',
           html: htmlContent,
         });
-        this.logger.log(`Email envoyé à ${email} (DEV)`);
+        this.logger.log(`Email envoyé à ${toRecipients.join(', ')} (DEV-SMTP)`);
       } catch (error: unknown) {
         this.logger.error(`Erreur: ${(error as Error).message}`);
       }
@@ -63,13 +73,20 @@ export class MailService {
 
     if (this.resend) {
       try {
-        await this.resend.emails.send({
-          from: 'NovaSMS <onboarding@resend.dev>',
-          to: email,
+        const result = await this.resend.emails.send({
+          from,
+          to: toRecipients,
           subject: '✅ Confirmez votre compte NovaSMS',
           html: htmlContent,
         });
-        this.logger.log(`Email envoyé à ${email} (Resend)`);
+
+        if (result.error) {
+          throw new Error(
+            result.error.message || 'Erreur Resend vérification email',
+          );
+        }
+
+        this.logger.log(`Email envoyé à ${toRecipients.join(', ')} (Resend)`);
       } catch (error: unknown) {
         this.logger.error(`Erreur Resend: ${(error as Error).message}`);
       }
@@ -86,11 +103,21 @@ export class MailService {
       </div>
     `;
 
+    const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
+
+    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const toRecipients = testRecipient ? [testRecipient] : [email];
+    if (testRecipient && ![email].includes(testRecipient)) {
+      this.logger.warn(
+        `TEST MODE: redirecting 2FA email intended for ${email} to ${testRecipient}`,
+      );
+    }
+
     if (this.transporter) {
       try {
         await this.transporter.sendMail({
-          from: 'NovaSMS <noreply@novasms.local>',
-          to: email,
+          from,
+          to: toRecipients,
           subject: '🔐 Votre code de vérification NovaSMS',
           html: htmlContent,
         });
@@ -107,12 +134,17 @@ export class MailService {
 
     if (this.resend) {
       try {
-        await this.resend.emails.send({
-          from: 'NovaSMS <onboarding@resend.dev>',
-          to: email,
+        const result = await this.resend.emails.send({
+          from,
+          to: toRecipients,
           subject: '🔐 Votre code de vérification NovaSMS',
           html: htmlContent,
         });
+
+        if (result.error) {
+          throw new Error(result.error.message || 'Erreur Resend 2FA');
+        }
+
         if (this.isDev) {
           this.logger.log(
             `Code 2FA envoyé à ${email} (Resend) — code: ${code}`,
@@ -142,15 +174,27 @@ export class MailService {
       </div>
     `;
 
+    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const toRecipients = testRecipient ? [testRecipient] : [email];
+    if (testRecipient && ![email].includes(testRecipient)) {
+      this.logger.warn(
+        `TEST MODE: redirecting password reset intended for ${email} to ${testRecipient}`,
+      );
+    }
+
+    const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
+
     if (this.transporter) {
       try {
         await this.transporter.sendMail({
-          from: 'NovaSMS <noreply@novasms.local>',
-          to: email,
+          from,
+          to: toRecipients,
           subject: '🔁 Réinitialisation de votre mot de passe NovaSMS',
           html: htmlContent,
         });
-        this.logger.log(`Password reset email envoyé à ${email} (DEV)`);
+        this.logger.log(
+          `Password reset email envoyé à ${toRecipients.join(', ')} (DEV)`,
+        );
       } catch (error: unknown) {
         this.logger.error(`Erreur reset password: ${(error as Error).message}`);
       }
@@ -159,19 +203,32 @@ export class MailService {
 
     if (this.resend) {
       try {
-        await this.resend.emails.send({
-          from: 'NovaSMS <onboarding@resend.dev>',
-          to: email,
+        const result = await this.resend.emails.send({
+          from,
+          to: toRecipients,
           subject: '🔁 Réinitialisation de votre mot de passe NovaSMS',
           html: htmlContent,
         });
-        this.logger.log(`Password reset email envoyé à ${email} (Resend)`);
+
+        if (result.error) {
+          throw new Error(
+            result.error.message || 'Erreur Resend reset password',
+          );
+        }
+
+        this.logger.log(
+          `Password reset email envoyé à ${toRecipients.join(', ')} (Resend)`,
+        );
       } catch (error: unknown) {
         this.logger.error(
           `Erreur Resend reset password: ${(error as Error).message}`,
         );
+        throw error;
       }
+      return;
     }
+
+    throw new Error('Aucun service email configuré (Resend/SMTP).');
   }
 
   async sendCampaignSentNotification(

@@ -225,6 +225,10 @@ model Campaign {
 
   segmentId         String?
   segment           Segment?          @relation(fields: [segmentId], references: [id])
+  
+  // EN-1688: Message personalization variables
+  promoCode         String?           @db.VarChar(50)
+  
   sends             Send[]
   analytics         Analytic[]
   engagementHeatmaps EngagementHeatmap[]
@@ -237,6 +241,7 @@ model Campaign {
   images            CampaignImage[]
 
   @@index([accountId, status, channelType])
+  @@index([accountId, createdAt])
   @@index([scheduledAt])
   @@index([abWinner])
   @@map("campaigns")
@@ -261,6 +266,8 @@ model Send {
   @@unique([campaignId, contactId])
   @@index([contactId])
   @@index([campaignId, variant])
+  @@index([campaignId, status])
+  @@index([campaignId, status, variant])
   @@map("sends")
 }
 

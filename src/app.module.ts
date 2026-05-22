@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { SegmentsController } from './segments.controller';
+import { AppService } from './app.service';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { ConfigModule } from '@nestjs/config';
@@ -28,6 +31,7 @@ import { WebhookModule } from './webhooks/webhook.module';
     CampaignsModule,
     WebhookModule,
   ],
-  providers: [{ provide: APP_INTERCEPTOR, useClass: TenantInterceptor }],
+  controllers: [AppController, SegmentsController],
+  providers: [AppService, { provide: APP_INTERCEPTOR, useClass: TenantInterceptor }],
 })
 export class AppModule {}

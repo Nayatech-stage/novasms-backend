@@ -109,6 +109,13 @@ export class AuthController {
     return this.authService.verifyTwoFactor(body.twoFactorToken, body.code);
   }
 
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Rafraîchir les tokens d\'authentification' })
+  async refresh(@Body() body: { refreshToken: string }) {
+    return this.authService.refreshTokens(body.refreshToken);
+  }
+
   @Post('generate-2fa-secret')
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Générer un secret TOTP pour l’enrôlement 2FA' })

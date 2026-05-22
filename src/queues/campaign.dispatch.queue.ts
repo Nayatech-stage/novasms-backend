@@ -4,13 +4,243 @@ import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
-import { CampaignStatus, SendStatus } from '@prisma/client';
+import { EmailProviderFactory } from '../providers/email/email.provider.factory';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import {
+  CampaignStatus,
+  CampaignVariant,
+  SendStatus,
+  SendVariant,
+} from '@prisma/client';
 
 export interface DispatchCampaignJob {
   campaignId: string;
   chunkSize?: number;
   cursor?: string | null;
   variant?: 'A' | 'B';
+  remainingContacts?: boolean;
+}
+
+export interface EvaluateABWinnerJob {
+  campaignId: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function personalizeText(
+  value: string,
+  context: { firstName?: string; companyName?: string; promoCode?: string },
+): string {
+  return value
+    .replace(/\{\{(?:pr[eé]nom|firstName)\}\}/gi, context.firstName || '')
+    .replace(
+      /\{\{(?:shopName|boutique|nomBoutique)\}\}/gi,
+      context.companyName || '',
+    )
+    .replace(/\{\{(?:promoCode|code_promo)\}\}/gi, context.promoCode || '');
+}
+
+function renderEmailBlock(
+  block: Record<string, unknown>,
+  context: { firstName?: string; companyName?: string; promoCode?: string },
+): string {
+  const type = typeof block.type === 'string' ? block.type : '';
+  const content = asRecord(block.content) || {};
+
+  if (type === 'text') {
+    const text = personalizeText(
+      typeof content.text === 'string' ? content.text : '',
+      context,
+    );
+    const fontSize =
+      typeof content.fontSize === 'number' ? `${content.fontSize}px` : '14px';
+    const fontWeight =
+      typeof content.fontWeight === 'number' ? content.fontWeight : 400;
+    const textAlign =
+      content.textAlign === 'center' ||
+      content.textAlign === 'right' ||
+      content.textAlign === 'justify'
+        ? content.textAlign
+        : 'left';
+    const color = typeof content.color === 'string' ? content.color : '#111827';
+
+    return `<p style="margin:0 0 12px; font-size:${fontSize}; font-weight:${fontWeight}; text-align:${textAlign}; color:${color}; line-height:1.5;">${escapeHtml(text).replaceAll('\n', '<br/>')}</p>`;
+  }
+
+  if (type === 'image') {
+    const src = typeof content.src === 'string' ? content.src : '';
+    const alt = typeof content.alt === 'string' ? content.alt : 'Image';
+    if (!src) return '';
+    return `<div style="margin:0 0 12px;"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="max-width:100%; width:100%; height:auto; display:block; border:0; border-radius:12px;"/></div>`;
+  }
+
+  if (type === 'button') {
+    const label = personalizeText(
+      typeof content.text === 'string' && content.text.trim()
+        ? content.text
+        : 'Bouton',
+      context,
+    );
+    const url = personalizeText(
+      typeof content.url === 'string' ? content.url : '',
+      context,
+    );
+    if (!url) return '';
+    return `<div style="margin:16px 0;"><a href="${escapeHtml(url)}" style="display:inline-block; background:#2EC80A; color:#fff; padding:12px 20px; text-decoration:none; border-radius:8px; font-weight:700;">${escapeHtml(label)}</a></div>`;
+  }
+
+  if (type === 'divider') {
+    return '<hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />';
+  }
+
+  if (type === 'spacing') {
+    const size = typeof content.size === 'string' ? content.size : 'medium';
+    const height =
+      size === 'small'
+        ? 8
+        : size === 'large'
+          ? 24
+          : size === 'extra-large'
+            ? 32
+            : 16;
+    return `<div style="height:${height}px;"></div>`;
+  }
+
+  if (type === 'html') {
+    return typeof content.html === 'string' ? content.html : '';
+  }
+
+  if (type === 'product') {
+    const title = personalizeText(
+      typeof content.title === 'string' ? content.title : 'Produit',
+      context,
+    );
+    const description = personalizeText(
+      typeof content.description === 'string' ? content.description : '',
+      context,
+    );
+    const price = personalizeText(
+      typeof content.price === 'string' ? content.price : '',
+      context,
+    );
+    const image = typeof content.image === 'string' ? content.image : '';
+    const url = personalizeText(
+      typeof content.url === 'string' ? content.url : '',
+      context,
+    );
+
+    return `
+      <table role="presentation" width="100%" style="border-collapse:collapse; margin:0 0 12px; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
+        <tr>
+          <td style="padding:0;">
+            ${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" style="width:100%; max-width:100%; display:block; height:auto;"/>` : ''}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px; font-family:Arial,sans-serif;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:8px;">
+              <strong style="font-size:16px; color:#111827;">${escapeHtml(title)}</strong>
+              ${price ? `<span style="font-size:14px; font-weight:700; color:#2EC80A; white-space:nowrap;">${escapeHtml(price)}</span>` : ''}
+            </div>
+            ${description ? `<p style="margin:0 0 12px; font-size:14px; color:#4b5563; line-height:1.5;">${escapeHtml(description).replaceAll('\n', '<br/>')}</p>` : ''}
+            ${url ? `<a href="${escapeHtml(url)}" style="display:inline-block; background:#2EC80A; color:#fff; padding:10px 16px; text-decoration:none; border-radius:8px; font-weight:700;">Voir le produit</a>` : ''}
+          </td>
+        </tr>
+      </table>
+    `;
+  }
+
+  if (type === 'columns') {
+    const layout = [1, 2, 3].includes(Number(content.layout || 2))
+      ? Number(content.layout || 2)
+      : 2;
+    const columns = Array.isArray(content.columns)
+      ? (content.columns as Array<Record<string, unknown>>)
+      : [];
+
+    return `
+      <table role="presentation" width="100%" style="border-collapse:collapse; margin:0 0 12px;">
+        <tr>
+          ${Array.from({ length: layout })
+            .map((_, index) => {
+              const column = columns[index];
+              const nestedBlocks = Array.isArray(column?.blocks)
+                ? (column.blocks as Array<Record<string, unknown>>)
+                : [];
+              const nestedHtml = nestedBlocks
+                .map((nested) => renderEmailBlock(nested, context))
+                .join('');
+              return `<td valign="top" style="padding:4px; width:${100 / layout}%;">${nestedHtml || '<div style="height:24px;border:1px dashed #e5e7eb;border-radius:8px;"></div>'}</td>`;
+            })
+            .join('')}
+        </tr>
+      </table>
+    `;
+  }
+
+  if (type === 'social') {
+    const links = [
+      { id: 'facebook', label: 'Facebook', color: '#1877F2' },
+      { id: 'instagram', label: 'Instagram', color: '#E4405F' },
+      { id: 'tiktok', label: 'TikTok', color: '#000000' },
+      { id: 'linkedin', label: 'LinkedIn', color: '#0A66C2' },
+    ]
+      .map((network) => {
+        const url =
+          typeof content[network.id] === 'string'
+            ? (content[network.id] as string)
+            : '';
+        if (!url) return '';
+        return `<a href="${escapeHtml(url)}" style="display:inline-block; margin-right:8px; color:${network.color}; text-decoration:none; font-weight:700;">${network.label}</a>`;
+      })
+      .join('');
+
+    return links ? `<p style="margin:12px 0;">${links}</p>` : '';
+  }
+
+  return '';
+}
+
+function renderEmailHtml(
+  contentJson: unknown,
+  fallbackText: string,
+  context: { firstName?: string; companyName?: string; promoCode?: string },
+): string {
+  const body = asRecord(contentJson);
+  const blocks = Array.isArray(body?.blocks)
+    ? (body?.blocks as Array<Record<string, unknown>>)
+    : [];
+
+  if (blocks.length === 0) {
+    return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;">${escapeHtml(fallbackText || '')}</div>`;
+  }
+
+  const preheader = typeof body?.preheader === 'string' ? body.preheader : '';
+  const subject = typeof body?.subject === 'string' ? body.subject : 'NovaSMS';
+  const renderedBlocks = blocks
+    .map((block) => renderEmailBlock(block, context))
+    .join('');
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#ffffff;color:#111827;">
+      <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preheader || subject)}</div>
+      ${renderedBlocks}
+    </div>
+  `;
 }
 
 @Processor('campaign-dispatch')
@@ -21,34 +251,45 @@ export class CampaignDispatchProcessor extends WorkerHost {
     private prisma: PrismaService,
     @InjectQueue('campaign-dispatch') private dispatchQueue: Queue,
     private mailService: MailService,
+    private emailProviderFactory: EmailProviderFactory,
+    private smsProviderFactory: SmsProviderFactory,
   ) {
     super();
   }
 
   async process(job: Job<DispatchCampaignJob>) {
+    if (job.name === 'evaluate-ab-winner') {
+      return this.handleEvaluateABWinner(job as Job<EvaluateABWinnerJob>);
+    }
+    if (job.name === 'dispatch-winner') {
+      return this.handleWinnerDispatch(
+        job as Job<{ campaignId: string; variant: 'A' | 'B' }>,
+      );
+    }
     return this.handleDispatch(job);
   }
 
   async handleDispatch(job: Job<DispatchCampaignJob>) {
-    const { campaignId, chunkSize = 500, cursor, variant } = job.data;
+    const {
+      campaignId,
+      chunkSize = 500,
+      cursor,
+      variant,
+      remainingContacts = false,
+    } = job.data;
 
     this.logger.log(
-      `Dispatching campaign ${campaignId}${variant ? ` (variant ${variant})` : ''}`,
+      `Dispatching campaign ${campaignId}${variant ? ` (variant ${variant})` : ''}${remainingContacts ? ' to remaining contacts' : ''}`,
     );
 
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
       include: {
+        account: {
+          select: { id: true, companyName: true },
+        },
         segment: {
           select: { id: true, name: true, type: true, criteria: true },
-        },
-        sends: {
-          where: {
-            status: {
-              in: [SendStatus.SENT, SendStatus.OPENED, SendStatus.CLICKED],
-            },
-          },
-          select: { contactId: true },
         },
       },
     });
@@ -63,67 +304,138 @@ export class CampaignDispatchProcessor extends WorkerHost {
       return { success: false, error: 'Invalid status' };
     }
 
-    const sentIds = campaign.sends.map((s) => s.contactId);
-    if (campaign.segmentId) {
-      this.logger.log(`Segment filtering pending for ${campaign.segmentId}`);
-    }
-
-    const where = {
-      accountId: campaign.accountId,
-      optOut: false,
-      ...(sentIds.length > 0 ? { NOT: { id: { in: sentIds } } } : {}),
+    const pendingWhere = {
+      campaignId,
+      status: SendStatus.PENDING,
+      ...(variant
+        ? {
+            variant: remainingContacts
+              ? SendVariant.NONE
+              : (variant as SendVariant),
+          }
+        : {}),
     };
 
-    const contacts = await this.prisma.contact.findMany({
-      where,
+    const sends = await this.prisma.send.findMany({
+      where: pendingWhere,
       take: chunkSize,
       skip: cursor ? 1 : 0,
       cursor: cursor ? { id: cursor } : undefined,
       orderBy: { id: 'asc' },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            firstName: true,
+            optOut: true,
+          },
+        },
+      },
     });
 
-    if (contacts.length === 0) {
-      await this.prisma.campaign.update({
-        where: { id: campaignId },
-        data: { status: CampaignStatus.SENT },
+    if (sends.length === 0) {
+      const remainingPending = await this.prisma.send.count({
+        where: {
+          campaignId,
+          status: SendStatus.PENDING,
+        },
       });
+      if (remainingPending === 0) {
+        // Use updateMany to avoid throwing if the campaign was deleted concurrently
+        await this.prisma.campaign.updateMany({
+          where: { id: campaignId },
+          data: { status: CampaignStatus.SENT },
+        });
+      }
       return { success: true, sent: 0, campaignId };
     }
 
     const results = await Promise.allSettled(
-      contacts.map(async (contact) => {
+      sends.map(async (sendRecord) => {
         try {
+          const { contact } = sendRecord;
+          if (contact.optOut) {
+            await this.prisma.send.update({
+              where: { id: sendRecord.id },
+              data: {
+                status: SendStatus.UNSUBSCRIBED,
+                variant: remainingContacts
+                  ? (variant as SendVariant)
+                  : sendRecord.variant,
+              },
+            });
+            return { success: false };
+          }
+
           let content = campaign.content || '';
+          // EN-1688: Message personalization with fallback values
           if (contact.firstName)
-            content = content.replace(/{{pr[eé]nom}}/gi, contact.firstName);
+            content = content.replace(
+              /{{pr[eé]nom|firstName}}/gi,
+              contact.firstName,
+            );
+          if (campaign.account?.companyName)
+            content = content.replace(
+              /{{shopName|boutique|nomBoutique}}/gi,
+              campaign.account.companyName,
+            );
+          if (campaign.promoCode)
+            content = content.replace(
+              /{{promoCode|code_promo}}/gi,
+              campaign.promoCode,
+            );
+
+          const effectiveVariant = remainingContacts
+            ? variant
+            : sendRecord.variant === SendVariant.B
+              ? 'B'
+              : sendRecord.variant === SendVariant.A
+                ? 'A'
+                : undefined;
+          const subject =
+            effectiveVariant === 'B'
+              ? campaign.subjectB || campaign.subject || ''
+              : effectiveVariant === 'A'
+                ? campaign.subjectA || campaign.subject || ''
+                : campaign.subject || '';
 
           if (campaign.channelType === 'SMS')
             await this.sendSms(contact.phone!, content);
           else
             await this.sendEmail(
               contact.email!,
-              campaign.subject || '',
+              subject,
+              campaign.contentJson,
               content,
+              {
+                firstName: contact.firstName || undefined,
+                companyName: campaign.account?.companyName || undefined,
+                promoCode: campaign.promoCode || undefined,
+              },
             );
 
-          await this.prisma.send.create({
+          await this.prisma.send.update({
+            where: { id: sendRecord.id },
             data: {
-              campaignId,
-              contactId: contact.id,
               status: SendStatus.SENT,
-              variant: variant ?? 'NONE',
+              variant: remainingContacts
+                ? (variant as SendVariant)
+                : sendRecord.variant,
               sentAt: new Date(),
             },
           });
           return { success: true };
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          await this.prisma.send.create({
+          await this.prisma.send.update({
+            where: { id: sendRecord.id },
             data: {
-              campaignId,
-              contactId: contact.id,
               status: SendStatus.BOUNCED,
-              variant: variant ?? 'NONE',
+              variant: remainingContacts
+                ? (variant as SendVariant)
+                : sendRecord.variant,
               sentAt: new Date(),
               bouncedReason: errMsg,
             },
@@ -137,7 +449,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
       (r): r is PromiseFulfilledResult<{ success: boolean }> =>
         r.status === 'fulfilled' && r.value.success,
     ).length;
-    const nextCursor = contacts[contacts.length - 1]?.id || null;
+    const nextCursor = sends[sends.length - 1]?.id || null;
 
     await this.prisma.campaign.update({
       where: { id: campaignId },
@@ -147,12 +459,18 @@ export class CampaignDispatchProcessor extends WorkerHost {
       },
     });
 
-    if (contacts.length === chunkSize) {
+    if (sends.length === chunkSize) {
       await this.dispatchQueue.add(
         'dispatch-campaign',
-        { campaignId, chunkSize, cursor: nextCursor, variant },
         {
-          jobId: `dispatch-${campaignId}-${nextCursor}`,
+          campaignId,
+          chunkSize,
+          cursor: nextCursor,
+          variant,
+          remainingContacts,
+        },
+        {
+          jobId: `dispatch-${campaignId}-${variant || 'all'}-${remainingContacts ? 'remaining' : 'direct'}-${nextCursor}`,
           removeOnComplete: true,
         },
       );
@@ -192,20 +510,181 @@ export class CampaignDispatchProcessor extends WorkerHost {
     };
   }
 
+  async handleEvaluateABWinner(job: Job<EvaluateABWinnerJob>) {
+    const { campaignId } = job.data;
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+      include: {
+        sends: {
+          select: {
+            status: true,
+            variant: true,
+            openedAt: true,
+            clickedAt: true,
+          },
+        },
+      },
+    });
+
+    if (!campaign || !campaign.subjectB) {
+      return { success: false, reason: 'not-ab-campaign' };
+    }
+
+    if (campaign.abWinner) {
+      return {
+        success: true,
+        reason: 'winner-already-set',
+        winner: campaign.abWinner,
+      };
+    }
+
+    const sentStatuses: SendStatus[] = [
+      SendStatus.SENT,
+      SendStatus.OPENED,
+      SendStatus.CLICKED,
+    ];
+
+    const statsA = campaign.sends.filter(
+      (s) => s.variant === SendVariant.A && sentStatuses.includes(s.status),
+    );
+    const statsB = campaign.sends.filter(
+      (s) => s.variant === SendVariant.B && sentStatuses.includes(s.status),
+    );
+
+    if (statsA.length === 0 && statsB.length === 0) {
+      return { success: false, reason: 'not-enough-data' };
+    }
+
+    const openRateA =
+      statsA.length > 0
+        ? statsA.filter((s) => Boolean(s.openedAt)).length / statsA.length
+        : 0;
+    const openRateB =
+      statsB.length > 0
+        ? statsB.filter((s) => Boolean(s.openedAt)).length / statsB.length
+        : 0;
+    const clickRateA =
+      statsA.length > 0
+        ? statsA.filter((s) => Boolean(s.clickedAt)).length / statsA.length
+        : 0;
+    const clickRateB =
+      statsB.length > 0
+        ? statsB.filter((s) => Boolean(s.clickedAt)).length / statsB.length
+        : 0;
+
+    // Fallback strategy: click rate first, then open rate.
+    const winner: CampaignVariant =
+      clickRateB > clickRateA ||
+      (clickRateB === clickRateA && openRateB > openRateA)
+        ? 'B'
+        : 'A';
+
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { abWinner: winner },
+    });
+
+    await this.prisma.aBTestResult.upsert({
+      where: { campaignId_variant: { campaignId, variant: 'A' } },
+      update: {
+        sentCount: statsA.length,
+        openedCount: statsA.filter((s) => Boolean(s.openedAt)).length,
+        clickedCount: statsA.filter((s) => Boolean(s.clickedAt)).length,
+        evaluatedAt: new Date(),
+      },
+      create: {
+        campaignId,
+        variant: 'A',
+        sentCount: statsA.length,
+        openedCount: statsA.filter((s) => Boolean(s.openedAt)).length,
+        clickedCount: statsA.filter((s) => Boolean(s.clickedAt)).length,
+        evaluatedAt: new Date(),
+      },
+    });
+
+    await this.prisma.aBTestResult.upsert({
+      where: { campaignId_variant: { campaignId, variant: 'B' } },
+      update: {
+        sentCount: statsB.length,
+        openedCount: statsB.filter((s) => Boolean(s.openedAt)).length,
+        clickedCount: statsB.filter((s) => Boolean(s.clickedAt)).length,
+        evaluatedAt: new Date(),
+      },
+      create: {
+        campaignId,
+        variant: 'B',
+        sentCount: statsB.length,
+        openedCount: statsB.filter((s) => Boolean(s.openedAt)).length,
+        clickedCount: statsB.filter((s) => Boolean(s.clickedAt)).length,
+        evaluatedAt: new Date(),
+      },
+    });
+
+    const remainingCount = await this.prisma.send.count({
+      where: {
+        campaignId,
+        status: SendStatus.PENDING,
+        variant: SendVariant.NONE,
+      },
+    });
+
+    if (remainingCount > 0) {
+      await this.dispatchQueue.add(
+        'dispatch-winner',
+        {
+          campaignId,
+          variant: winner,
+          remainingContacts: true,
+        },
+        {
+          jobId: `dispatch-winner-${campaignId}-${winner}`,
+          removeOnComplete: true,
+        },
+      );
+    }
+
+    return {
+      success: true,
+      campaignId,
+      winner,
+      openRateA,
+      openRateB,
+      clickRateA,
+      clickRateB,
+      remainingCount,
+    };
+  }
+
   async handleWinnerDispatch(
     job: Job<{ campaignId: string; variant: 'A' | 'B' }>,
   ) {
     return this.handleDispatch({
-      data: { ...job.data, chunkSize: 500 },
+      data: { ...job.data, chunkSize: 500, remainingContacts: true },
     } as unknown as Job<DispatchCampaignJob>);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async sendSms(_phone: string, _content: string) {
-    /* TODO */
+  private async sendSms(phone: string, content: string) {
+    const provider = this.smsProviderFactory.getProvider();
+    const result = await provider.send(phone, content);
+
+    if (!result.success) {
+      throw new Error(result.error || 'SMS provider send failed');
+    }
   }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async sendEmail(_email: string, _subject: string, _content: string) {
-    /* TODO */
+
+  private async sendEmail(
+    email: string,
+    subject: string,
+    contentJson: unknown,
+    fallbackText: string,
+    context: { firstName?: string; companyName?: string; promoCode?: string },
+  ) {
+    const provider = this.emailProviderFactory.getProvider();
+    const html = renderEmailHtml(contentJson, fallbackText, context);
+    const result = await provider.send(email, subject, html);
+
+    if (!result.success) {
+      throw new Error(result.error || 'Email provider send failed');
+    }
   }
 }

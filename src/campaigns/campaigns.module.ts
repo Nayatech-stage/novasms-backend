@@ -6,7 +6,10 @@ import { FileUploadService } from './file-upload.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { MailModule } from '../mail/mail.module';
 import { CampaignDispatchProcessor } from '../queues/campaign.dispatch.queue';
+import { CampaignScheduleProcessor } from '../queues/campaign.schedule.queue';
 import { CampaignScheduleWorker } from '../queues/campaign.schedule.worker';
+import { EmailProviderFactory } from '../providers/email/email.provider.factory';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 
 @Module({
   imports: [
@@ -22,7 +25,10 @@ import { CampaignScheduleWorker } from '../queues/campaign.schedule.worker';
     CampaignsService,
     FileUploadService,
     CampaignDispatchProcessor,
+    CampaignScheduleProcessor,
     CampaignScheduleWorker,
+    EmailProviderFactory,
+    SmsProviderFactory,
   ],
   exports: [CampaignsService],
 })

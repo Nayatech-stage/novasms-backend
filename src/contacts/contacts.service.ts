@@ -32,6 +32,8 @@ export type SegmentCriterion = {
 @Injectable()
 export class ContactsService {
   private readonly logger = new Logger(ContactsService.name);
+  private static readonly SEGMENT_CACHE_TTL_SECONDS = 300;
+  private static readonly CONTACT_COUNT_CACHE_TTL_SECONDS = 300;
 
   constructor(
     private prisma: PrismaService,
@@ -140,6 +142,12 @@ export class ContactsService {
 
   async findAll(accountId: string, params: any) {
     const limit = Math.min(params.limit || 20, 100);
+    const isUnfiltered =
+      !params.search &&
+      !params.location &&
+      !params.tag &&
+      !params.dateAddedFrom &&
+      !params.dateAddedTo;
     const where: any = { accountId };
     if (params.search) {
       where.OR = [
@@ -153,7 +161,8 @@ export class ContactsService {
     if (params.tag) where.tags = { array_contains: [params.tag] }; // ✅ array_contains pour Json
     const contacts = await this.prisma.contact.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // Keyset pagination must use the same unique ordering field as the cursor.
+      orderBy: { id: 'asc' },
       take: limit + 1,
       cursor: params.cursor ? { id: params.cursor } : undefined,
       skip: params.cursor ? 1 : 0,
@@ -163,10 +172,33 @@ export class ContactsService {
       const n = contacts.pop();
       nextCursor = n?.id || null;
     }
+    let total: number;
+    if (isUnfiltered) {
+      const countCacheKey = `contacts:count:${accountId}`;
+      try {
+        const cachedTotal = await redisConnection.get(countCacheKey);
+        if (cachedTotal) {
+          total = parseInt(cachedTotal, 10);
+        } else {
+          total = await this.prisma.contact.count({ where });
+          await redisConnection.set(
+            countCacheKey,
+            String(total),
+            'EX',
+            ContactsService.CONTACT_COUNT_CACHE_TTL_SECONDS,
+          );
+        }
+      } catch {
+        total = await this.prisma.contact.count({ where });
+      }
+    } else {
+      total = await this.prisma.contact.count({ where });
+    }
+
     return {
       data: contacts,
       nextCursor,
-      total: await this.prisma.contact.count({ where }),
+      total,
     };
   }
 
@@ -186,6 +218,7 @@ export class ContactsService {
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
+    await this.invalidateContactCountCache(accountId);
     return c;
   }
 
@@ -194,6 +227,7 @@ export class ContactsService {
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
+    await this.invalidateContactCountCache(accountId);
     return { success: true };
   }
 
@@ -218,6 +252,7 @@ export class ContactsService {
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
+    await this.invalidateContactCountCache(accountId);
     return updated;
   }
 
@@ -233,6 +268,7 @@ export class ContactsService {
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
+    await this.invalidateContactCountCache(accountId);
     return updated;
   }
 
@@ -311,7 +347,12 @@ export class ContactsService {
       );
       const count = await this.prisma.contact.count({ where });
       try {
-        await redisConnection.set(key, String(count), 'EX', 30);
+        await redisConnection.set(
+          key,
+          String(count),
+          'EX',
+          ContactsService.SEGMENT_CACHE_TTL_SECONDS,
+        );
       } catch {
         // Ignore cache write errors
       }
@@ -337,6 +378,34 @@ export class ContactsService {
 
     const results = await Promise.all(
       segments.map(async (segment) => {
+        if (segment.type === 'static') {
+          const contactIds = Array.isArray(segment.criteria)
+            ? segment.criteria
+            : (segment.criteria as any)?.contactIds || [];
+          const contacts = await this.prisma.contact.findMany({
+            where: {
+              accountId,
+              id: { in: contactIds },
+              optOut: false,
+            },
+            orderBy: { createdAt: 'desc' },
+            ...(typeof limit === 'number' ? { take: limit } : {}),
+            select: {
+              id: true,
+              email: true,
+              phone: true,
+              firstName: true,
+              lastName: true,
+              tags: true,
+              createdAt: true,
+              optOut: true,
+              location: true,
+              accountId: true,
+            },
+          });
+          return { ...segment, contacts };
+        }
+
         if (segment.type !== 'dynamic') {
           return { ...segment, contacts: [] };
         }
@@ -378,8 +447,40 @@ export class ContactsService {
       name: string;
       logic: SegmentLogic;
       criteria: SegmentCriterion[];
+      contactIds?: string[];
     },
   ) {
+    const selectedContactIds = Array.isArray(payload.contactIds)
+      ? Array.from(
+          new Set(
+            payload.contactIds.filter(
+              (id) => typeof id === 'string' && id.trim().length > 0,
+            ),
+          ),
+        )
+      : [];
+
+    if (selectedContactIds.length > 0) {
+      const contactCount = await this.prisma.contact.count({
+        where: {
+          accountId,
+          id: { in: selectedContactIds },
+          optOut: false,
+        },
+      });
+
+      return this.prisma.segment.create({
+        data: {
+          accountId,
+          name: payload.name,
+          type: 'static',
+          criteria: { contactIds: selectedContactIds },
+          contactCount,
+          lastCalculated: new Date(),
+        },
+      });
+    }
+
     const where = this.buildWhereForSegment(
       accountId,
       payload.logic,
@@ -431,6 +532,20 @@ export class ContactsService {
         throw new Error('Segment not found');
       }
 
+      if (segment.type === 'static') {
+        const contactIds = Array.isArray(segment.criteria)
+          ? segment.criteria
+          : (segment.criteria as any)?.contactIds || [];
+
+        return this.prisma.contact.count({
+          where: {
+            accountId,
+            id: { in: contactIds },
+            optOut: false,
+          },
+        });
+      }
+
       // Utiliser le contactCount déjà calculé (mis à jour par le service de recalculation)
       return segment.contactCount || 0;
     } catch (error) {
@@ -475,6 +590,27 @@ export class ContactsService {
         throw new Error('Segment not found');
       }
 
+      if (segment.type === 'static') {
+        const contactIds = Array.isArray(segment.criteria)
+          ? segment.criteria
+          : (segment.criteria as any)?.contactIds || [];
+
+        return this.prisma.contact.findMany({
+          where: {
+            accountId,
+            id: { in: contactIds },
+            optOut: false,
+          },
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            firstName: true,
+            lastName: true,
+          },
+        });
+      }
+
       const criteria = (segment.criteria as any)?.rules || [];
       const logic = (segment.criteria as any)?.logic || 'AND';
       const where = this.buildWhereForSegment(accountId, logic, criteria);
@@ -494,6 +630,14 @@ export class ContactsService {
         `Erreur lors de la récupération des contacts: ${String(error)}`,
       );
       return [];
+    }
+  }
+
+  private async invalidateContactCountCache(accountId: string) {
+    try {
+      await redisConnection.del(`contacts:count:${accountId}`);
+    } catch {
+      // Ignore cache invalidation errors
     }
   }
 }

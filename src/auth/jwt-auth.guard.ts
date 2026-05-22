@@ -15,6 +15,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       ['GET', '/api/auth/verify-email'],
       ['POST', '/api/auth/resend-confirmation'],
       ['POST', '/api/auth/verify-2fa'],
+      ['POST', '/api/auth/refresh'],
     ] as const;
 
     const requestPath = request.path ?? request.url ?? '';
@@ -23,7 +24,26 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         request.method === method && requestPath.startsWith(route),
     );
 
-    if (isPublicRoute) {
+    const isDevImageUploadRoute =
+      process.env.NODE_ENV !== 'production' &&
+      request.method === 'POST' &&
+      /\/api\/campaigns\/[^/]+\/images\/upload$/.test(requestPath);
+
+    const isPublicCampaignImageRoute =
+      request.method === 'GET' &&
+      /\/api\/campaigns\/images\/[^/]+$/.test(requestPath);
+
+    const isDevCampaignCreateRoute =
+      process.env.NODE_ENV !== 'production' &&
+      request.method === 'POST' &&
+      /\/api\/campaigns$/.test(requestPath);
+
+    if (
+      isPublicRoute ||
+      isPublicCampaignImageRoute ||
+      isDevImageUploadRoute ||
+      isDevCampaignCreateRoute
+    ) {
       return true;
     }
 

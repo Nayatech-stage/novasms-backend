@@ -11,6 +11,13 @@ const connection = new IORedis(
   },
 );
 
+// Connection lifecycle logging to help debug Redis issues
+connection.on('connect', () => console.log('[REDIS] connect'));
+connection.on('ready', () => console.log('[REDIS] ready'));
+connection.on('error', (err) => console.error('[REDIS] error', err && err.message));
+connection.on('close', () => console.log('[REDIS] closed'));
+connection.on('reconnecting', () => console.log('[REDIS] reconnecting'));
+
 export const importQueue = new Queue('import-contacts', {
   connection,
   defaultJobOptions: {
@@ -31,6 +38,7 @@ export function initImportWorker(importService: ImportService) {
       const { accountId, fileName, mappedData } = job.data;
 
       // Délègue le traitement complet au service
+      console.log('[IMPORT WORKER] starting job', job.id, 'file:', fileName, 'rows:', (mappedData || []).length);
       return importService.processFullImport(accountId, fileName, mappedData);
     },
     {
@@ -38,6 +46,20 @@ export function initImportWorker(importService: ImportService) {
       concurrency: 2, // Traitement parallèle de 2 imports max pour performance
     },
   );
+
+  console.log('[IMPORT WORKER] initialized for queue import-contacts');
+
+  importWorker.on('active', (job) => {
+    try {
+      console.log('[IMPORT WORKER] active job', job.id, 'name', job.name, 'dataKeys', Object.keys(job.data || {}));
+    } catch (e) {
+      console.log('[IMPORT WORKER] active job (error logging job data)');
+    }
+  });
+
+  importWorker.on('error', (err) => {
+    console.error('[IMPORT WORKER] error', err && err.stack ? err.stack : err);
+  });
 
   importWorker.on('completed', (job) => {
     console.log(`✅ Import job ${job.id} completed`);

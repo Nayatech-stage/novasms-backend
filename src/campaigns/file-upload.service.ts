@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { join } from 'path';
 import * as fs from 'fs';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface UploadedFile {
@@ -32,6 +32,14 @@ export class FileUploadService {
     this.ensureUploadDirExists();
   }
 
+  private getPublicApiBaseUrl(): string {
+    const baseUrl =
+      process.env.BACKEND_PUBLIC_URL ||
+      process.env.API_BASE_URL ||
+      'http://localhost:3000';
+    return `${baseUrl.replace(/\/$/, '')}/api`;
+  }
+
   private ensureUploadDirExists() {
     if (!fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true });
@@ -53,6 +61,9 @@ export class FileUploadService {
       throw new Error('No file provided');
     }
 
+    // Ensure upload dir exists (defensive)
+    this.ensureUploadDirExists();
+
     // Cast to strongly typed interface
     const typedFile = file;
 
@@ -68,27 +79,40 @@ export class FileUploadService {
     }
 
     // Generate unique filename
-    const fileExtension = typedFile.originalname.split('.').pop() || 'jpg';
-    const fileName = `${uuidv4()}.${fileExtension}`;
+    const originalName = (typedFile as any).originalname || (typedFile as any).filename || 'file.jpg';
+    const fileExtension = originalName.split('.').pop() || 'jpg';
+    const fileName = `${randomUUID()}.${fileExtension}`;
     const filePath = join(this.uploadDir, fileName);
 
-    // Save file to disk
-    fs.writeFileSync(filePath, typedFile.buffer);
+    // Save file to disk. Support both memory buffer (preferred) and disk-stored multer file.
+    if (typedFile && (typedFile as any).buffer && Buffer.isBuffer((typedFile as any).buffer)) {
+      fs.writeFileSync(filePath, (typedFile as any).buffer);
+    } else if ((typedFile as any).path) {
+      // Multer may store file on disk; copy it to our uploads dir
+      const source = (typedFile as any).path as string;
+      if (!fs.existsSync(source)) {
+        throw new Error('Uploaded file not found on disk');
+      }
+      fs.copyFileSync(source, filePath);
+    } else {
+      throw new Error('File buffer or path missing');
+    }
 
     // Save metadata to database
+    const relativeUrl = `/api/campaigns/images/${fileName}`;
     const campaignImage = await this.prisma.campaignImage.create({
       data: {
         campaignId,
         fileName: typedFile.originalname,
         fileSize: typedFile.size,
         mimeType: typedFile.mimetype,
-        storageUrl: `/api/campaigns/images/${fileName}`,
+        storageUrl: relativeUrl,
       },
     });
 
     return {
       id: campaignImage.id,
-      url: campaignImage.storageUrl,
+      url: `${this.getPublicApiBaseUrl()}/campaigns/images/${fileName}`,
       fileName: campaignImage.fileName,
       size: campaignImage.fileSize,
       type: campaignImage.mimeType,
@@ -96,14 +120,28 @@ export class FileUploadService {
     };
   }
 
-  getCampaignImage(fileName: string): Buffer {
+  async getCampaignImage(
+    fileName: string,
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
     const filePath = join(this.uploadDir, fileName);
 
     if (!fs.existsSync(filePath)) {
       throw new Error('Image not found');
     }
 
-    return fs.readFileSync(filePath);
+    const imageRecord = await this.prisma.campaignImage.findFirst({
+      where: {
+        storageUrl: {
+          endsWith: `/${fileName}`,
+        },
+      },
+      select: { mimeType: true },
+    });
+
+    return {
+      buffer: fs.readFileSync(filePath),
+      mimeType: imageRecord?.mimeType || 'application/octet-stream',
+    };
   }
 
   deleteCampaignImage(fileName: string): void {
@@ -129,7 +167,12 @@ export class FileUploadService {
       },
     });
 
-    return images;
+    return images.map((image) => ({
+      ...image,
+      storageUrl: image.storageUrl.startsWith('http')
+        ? image.storageUrl
+        : `${this.getPublicApiBaseUrl()}${image.storageUrl.replace(/^\/api/, '')}`,
+    }));
   }
 
   async deleteAllCampaignImages(campaignId: string): Promise<void> {

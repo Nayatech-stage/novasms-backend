@@ -23,6 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { ContactsService } from './contacts.service';
 import { ImportService } from './import.service';
+import { importQueue } from '../queues/import.queue';
 import { SegmentCreateSchema, SegmentPreviewSchema } from './dto/segment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { Request as ExpressRequest } from 'express';
@@ -112,6 +113,28 @@ export class ContactsController {
       message: result.message,
       estimatedTime: result.estimatedTime,
     };
+  }
+
+  @Get('import/:jobId')
+  @ApiOperation({ summary: "Récupérer le statut d'un import" })
+  async getImportStatus(@Param('jobId') jobId: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+
+    const job = await importQueue.getJob(jobId);
+    if (!job) {
+      return { success: false, message: 'Job introuvable' };
+    }
+
+    const state = await job.getState();
+    // If completed, try to return the job return value if available
+    if (state === 'completed') {
+      // job.returnvalue may contain the report if the worker returned it
+      const report = (job as any).returnvalue || null;
+      return { success: true, status: 'completed', report };
+    }
+
+    return { success: true, status: state };
   }
 
   @Get(':id/export')
@@ -261,6 +284,7 @@ export class ContactsController {
       });
       return {
         success: true,
+        id: segment.id,
         segment,
         message: `Segment "${parsed.name}" cree pour ${segment.contactCount} contacts`,
       };
