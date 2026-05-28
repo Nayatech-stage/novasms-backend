@@ -1,14 +1,10 @@
-import {
-  CampaignStatus,
-  SendStatus,
-  SendVariant,
-} from '@prisma/client';
+import { CampaignStatus, SendStatus, SendVariant } from '@prisma/client';
 import { CampaignDispatchProcessor } from './campaign.dispatch.queue';
-import type { Queue } from 'bullmq';
-import type { MailService } from '../mail/mail.service';
-import type { EmailProviderFactory } from '../providers/email/email.provider.factory';
-import type { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
-import type { PrismaService } from '../prisma/prisma.service';
+import { Queue } from 'bullmq';
+import { MailService } from '../mail/mail.service';
+import { EmailProviderFactory } from '../providers/email/email.provider.factory';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
   it('picks winner, stores AB results, and dispatches winner to remaining contacts', async () => {
@@ -119,5 +115,83 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
         removeOnComplete: true,
       },
     );
+  });
+
+  it('marks the campaign as sent when the last dispatch chunk finishes', async () => {
+    const prisma = {
+      campaign: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'camp-2',
+          channelType: 'SMS',
+          status: CampaignStatus.SENDING,
+          content: 'Hello',
+          contentJson: { blocks: [] },
+          account: { companyName: 'NovaSMS' },
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'camp-2' }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      send: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'send-1',
+            variant: SendVariant.NONE,
+            contact: {
+              id: 'contact-1',
+              email: 'recipient@example.com',
+              phone: '+22501020304',
+              firstName: 'Romuald',
+              optOut: false,
+            },
+          },
+        ]),
+        update: jest.fn().mockResolvedValue({ id: 'send-1' }),
+        count: jest.fn().mockResolvedValue(0),
+      },
+    } as unknown as PrismaService;
+
+    const dispatchQueue = {
+      add: jest.fn().mockResolvedValue(undefined),
+    } as unknown as Queue;
+
+    const mailService = {
+      sendCampaignSentNotification: jest.fn().mockResolvedValue(undefined),
+    } as unknown as MailService;
+
+    const emailProviderFactory = {
+      getProvider: jest.fn(),
+    } as unknown as EmailProviderFactory;
+
+    const smsProviderFactory = {
+      getProvider: jest.fn().mockReturnValue({
+        send: jest.fn().mockResolvedValue({ success: true }),
+      }),
+    } as unknown as SmsProviderFactory;
+
+    const processor = new CampaignDispatchProcessor(
+      prisma,
+      dispatchQueue,
+      mailService,
+      emailProviderFactory,
+      smsProviderFactory,
+    );
+
+    const response = await processor.process({
+      name: 'dispatch-campaign',
+      data: { campaignId: 'camp-2' },
+    } as never);
+
+    expect(response).toEqual(
+      expect.objectContaining({
+        success: true,
+        sent: 1,
+        campaignId: 'camp-2',
+      }),
+    );
+    expect(prisma.campaign.updateMany).toHaveBeenCalledWith({
+      where: { id: 'camp-2' },
+      data: { status: CampaignStatus.SENT },
+    });
+    expect(dispatchQueue.add).not.toHaveBeenCalled();
   });
 });

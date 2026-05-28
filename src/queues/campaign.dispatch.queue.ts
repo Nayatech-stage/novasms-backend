@@ -401,11 +401,17 @@ export class CampaignDispatchProcessor extends WorkerHost {
                 ? campaign.subjectA || campaign.subject || ''
                 : campaign.subject || '';
 
-          if (campaign.channelType === 'SMS')
-            await this.sendSms(contact.phone!, content);
-          else
+          if (campaign.channelType === 'SMS') {
+            if (!contact.phone) {
+              throw new Error('Contact phone missing');
+            }
+            await this.sendSms(contact.phone, content);
+          } else {
+            if (!contact.email) {
+              throw new Error('Contact email missing');
+            }
             await this.sendEmail(
-              contact.email!,
+              contact.email,
               subject,
               campaign.contentJson,
               content,
@@ -415,6 +421,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
                 promoCode: campaign.promoCode || undefined,
               },
             );
+          }
 
           await this.prisma.send.update({
             where: { id: sendRecord.id },
@@ -458,6 +465,20 @@ export class CampaignDispatchProcessor extends WorkerHost {
         failedCount: { increment: results.length - successCount },
       },
     });
+
+    const remainingPending = await this.prisma.send.count({
+      where: {
+        campaignId,
+        status: SendStatus.PENDING,
+      },
+    });
+
+    if (remainingPending === 0) {
+      await this.prisma.campaign.updateMany({
+        where: { id: campaignId },
+        data: { status: CampaignStatus.SENT },
+      });
+    }
 
     if (sends.length === chunkSize) {
       await this.dispatchQueue.add(
