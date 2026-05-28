@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { ContactsService } from '../contacts/contacts.service';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -52,6 +53,7 @@ export class CampaignsService {
 
   constructor(
     private prisma: PrismaService,
+    private contactsService: ContactsService,
     @InjectQueue('campaign-dispatch') private dispatchQueue: Queue,
     @InjectQueue('campaign-schedule') private scheduleQueue: Queue,
   ) {}
@@ -456,6 +458,14 @@ export class CampaignsService {
     return account?.id ?? null;
   }
 
+  async findAccountIdBySegmentId(segmentId: string) {
+    const segment = await this.prisma.segment.findUnique({
+      where: { id: segmentId },
+      select: { accountId: true },
+    });
+    return segment?.accountId ?? null;
+  }
+
   async cancelScheduled(accountId: string, id: string) {
     const campaign = await this.prisma.campaign.findFirst({
       where: { id, accountId },
@@ -685,20 +695,11 @@ export class CampaignsService {
         return { success: false, error: 'Segment non sélectionné' };
       }
 
-      // Récupérer les vrais contacts du segment
-      const contacts = await this.prisma.contact.findMany({
-        where: {
-          accountId,
-          optOut: false,
-        },
-        select: {
-          id: true,
-          email: true,
-          phone: true,
-          firstName: true,
-          lastName: true,
-        },
-      });
+      // Récupérer uniquement les contacts ciblés par le segment de la campagne.
+      const contacts = await this.contactsService.getSegmentContactsForCampaign(
+        accountId,
+        campaign.segmentId,
+      );
 
       if (contacts.length === 0) {
         return {
@@ -707,7 +708,31 @@ export class CampaignsService {
         };
       }
 
-      let finalStatus: CampaignStatus = CampaignStatus.SENT;
+      const emailTestRecipient = process.env.RESEND_TEST_RECIPIENT?.trim();
+      const shouldRestrictEmailDelivery =
+        campaign.channelType === 'EMAIL' && Boolean(emailTestRecipient);
+
+      const deliveryContacts = shouldRestrictEmailDelivery
+        ? contacts.filter(
+            (contact) => contact.email && contact.email === emailTestRecipient,
+          )
+        : contacts;
+
+      if (shouldRestrictEmailDelivery && deliveryContacts.length === 0) {
+        return {
+          success: false,
+          error: `Aucun contact du segment ne correspond au destinataire de test ${emailTestRecipient}`,
+        };
+      }
+
+      if (shouldRestrictEmailDelivery && deliveryContacts.length < contacts.length) {
+        this.logger.log(
+          `Email test mode: restricting delivery from ${contacts.length} contacts to ${deliveryContacts.length} contact(s) matching ${emailTestRecipient}`,
+        );
+      }
+
+      // Immediate sends must enter SENDING so dispatch workers can process PENDING rows.
+      let finalStatus: CampaignStatus = CampaignStatus.SENDING;
       let finalScheduledAt: Date | null = null;
 
       if (
@@ -719,7 +744,7 @@ export class CampaignsService {
       }
 
       const isABCampaign = Boolean(campaign.subjectB);
-      const shuffledContacts = [...contacts].sort(() => Math.random() - 0.5);
+      const shuffledContacts = [...deliveryContacts].sort(() => Math.random() - 0.5);
       const requestedTestPct = campaign.abSplitPct || 50;
       const normalizedTestPct = Math.max(0, Math.min(100, requestedTestPct));
 

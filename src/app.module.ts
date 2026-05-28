@@ -13,6 +13,8 @@ import { MailModule } from './mail/mail.module';
 import { ContactsModule } from './contacts/contacts.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { WebhookModule } from './webhooks/webhook.module';
+import { EmailProviderFactory } from './providers/email/email.provider.factory';
+import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 
 @Module({
   imports: [
@@ -32,6 +34,11 @@ import { WebhookModule } from './webhooks/webhook.module';
     WebhookModule,
   ],
   controllers: [AppController, SegmentsController],
-  providers: [AppService, { provide: APP_INTERCEPTOR, useClass: TenantInterceptor }],
+  providers: [
+    AppService,
+    EmailProviderFactory,
+    SmsProviderFactory,
+    { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },
+  ],
 })
 export class AppModule {}

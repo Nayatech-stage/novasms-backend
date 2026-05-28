@@ -3,6 +3,15 @@ import * as nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import type { Transporter } from 'nodemailer';
 
+function resolvePublicFrontendUrl(): string {
+  const rawUrl =
+    process.env.FRONTEND_PUBLIC_URL ||
+    process.env.FRONTEND_URL ||
+    'http://localhost:5173';
+
+  return rawUrl.replace(/\/$/, '');
+}
+
 @Injectable()
 export class MailService {
   private readonly resend: Resend | null;
@@ -33,8 +42,7 @@ export class MailService {
   }
 
   async sendVerificationEmail(email: string, token: string) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const verifyUrl = `${frontendUrl}/verify-email/${token}`;
+    const verifyUrl = `${resolvePublicFrontendUrl()}/verify-email/${token}`;
     console.log('📧 LIEN DE VÉRIFICATION EMAIL:', verifyUrl);
     const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
 
@@ -159,8 +167,7 @@ export class MailService {
   }
 
   async sendPasswordResetEmail(email: string, token: string) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const resetUrl = `${frontendUrl}/reset-password/${token}`;
+    const resetUrl = `${resolvePublicFrontendUrl()}/reset-password/${token}`;
 
     console.log('🔁 LIEN RESET PASSWORD EMAIL:', resetUrl);
 

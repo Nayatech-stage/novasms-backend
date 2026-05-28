@@ -21,6 +21,16 @@ export class AppController {
     return this.appService.getStatus();
   }
 
+  @Get('api/providers/health')
+  @ApiOperation({ summary: 'Santé détaillée des providers' })
+  @ApiResponse({
+    status: 200,
+    description: 'Configuration et état des providers email/SMS',
+  })
+  getProvidersHealth(): object {
+    return this.appService.getProvidersHealth();
+  }
+
   @Get()
   @ApiOperation({ summary: 'Page d accueil API' })
   @ApiResponse({ status: 200, description: 'Bienvenue sur NovaSMS API' })

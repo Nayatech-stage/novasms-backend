@@ -20,8 +20,9 @@ export class CampaignScheduleWorker {
     const campaigns = await this.prisma.campaign.findMany({
       where: {
         status: CampaignStatus.SCHEDULED,
-        scheduledAt: { gte: new Date(now.getTime() - 5 * 60 * 1000), lte: now },
+        scheduledAt: { lte: now },
       },
+      orderBy: { scheduledAt: 'asc' },
     });
 
     for (const c of campaigns) {

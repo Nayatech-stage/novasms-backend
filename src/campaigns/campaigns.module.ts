@@ -10,11 +10,13 @@ import { CampaignScheduleProcessor } from '../queues/campaign.schedule.queue';
 import { CampaignScheduleWorker } from '../queues/campaign.schedule.worker';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { ContactsModule } from '../contacts/contacts.module';
 
 @Module({
   imports: [
     PrismaModule,
     MailModule,
+    ContactsModule,
     BullModule.registerQueue(
       { name: 'campaign-dispatch' },
       { name: 'campaign-schedule' },

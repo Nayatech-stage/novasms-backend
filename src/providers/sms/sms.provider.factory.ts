@@ -47,6 +47,27 @@ class FailoverSmsProvider implements SmsProvider {
   }
 }
 
+class SingleSmsProvider implements SmsProvider {
+  constructor(private readonly primary: SmsProvider) {}
+
+  async send(to: string, message: string) {
+    return this.primary.send(to, message);
+  }
+
+  async sendBatch(contacts: { phone: string }[], message: string) {
+    let sent = 0;
+    let failed = 0;
+
+    for (const contact of contacts) {
+      const result = await this.send(contact.phone, message);
+      if (result.success) sent += 1;
+      else failed += 1;
+    }
+
+    return { sent, failed };
+  }
+}
+
 /**
  * Factory SMS basee sur SMS_PROVIDER.
  * Valeur par defaut: twilio.
@@ -54,6 +75,22 @@ class FailoverSmsProvider implements SmsProvider {
 @Injectable()
 export class SmsProviderFactory {
   private readonly logger = new Logger(SmsProviderFactory.name);
+
+  private isProviderConfigured(name: SmsProviderName): boolean {
+    if (name === 'twilio') {
+      return (
+        Boolean(process.env.TWILIO_ACCOUNT_SID) &&
+        Boolean(process.env.TWILIO_AUTH_TOKEN) &&
+        Boolean(process.env.TWILIO_PHONE_NUMBER)
+      );
+    }
+
+    return (
+      Boolean(process.env.AFRICASTALKING_API_KEY) &&
+      Boolean(process.env.AFRICASTALKING_USERNAME) &&
+      Boolean(process.env.AFRICASTALKING_SENDER_ID)
+    );
+  }
 
   private resolveProviderOrder(): {
     primary: SmsProviderName;
@@ -85,8 +122,18 @@ export class SmsProviderFactory {
       `SMS providers configured: primary=${primary}, secondary=${secondary}`,
     );
 
+    const primaryProvider = this.buildProvider(primary, overrides);
+    const secondaryConfigured = this.isProviderConfigured(secondary);
+
+    if (!secondaryConfigured) {
+      this.logger.warn(
+        `Secondary SMS provider (${secondary}) not configured, fallback disabled`,
+      );
+      return new SingleSmsProvider(primaryProvider);
+    }
+
     return new FailoverSmsProvider(
-      this.buildProvider(primary, overrides),
+      primaryProvider,
       this.buildProvider(secondary, overrides),
       this.logger,
       primary,
@@ -110,6 +157,7 @@ export class SmsProviderFactory {
           Boolean(process.env.AFRICASTALKING_API_KEY) &&
           Boolean(process.env.AFRICASTALKING_USERNAME) &&
           Boolean(process.env.AFRICASTALKING_SENDER_ID),
+        fallbackEnabled: this.isProviderConfigured(secondary),
       },
     };
   }

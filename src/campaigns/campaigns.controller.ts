@@ -13,6 +13,7 @@ import {
   Res,
   HttpCode,
   HttpStatus,
+  HttpException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -56,7 +57,12 @@ export class CampaignsController {
 
   @Post()
   async create(@Body() body: unknown, @Request() req: TenantRequest) {
-    const accountId = req.accountId ?? (await this.campaignsService.findFirstAccountId());
+    const segmentId = (body as { segmentId?: string } | null)?.segmentId;
+    const accountId =
+      req.accountId ??
+      (segmentId
+        ? await this.campaignsService.findAccountIdBySegmentId(segmentId)
+        : await this.campaignsService.findFirstAccountId());
     if (!accountId) throw new Error('accountId manquant');
     return this.campaignsService.create(accountId, body);
   }
@@ -230,15 +236,15 @@ export class CampaignsController {
     @Request() req: TenantRequest,
     @Res() res: Response,
   ) {
-    const accountId = req.accountId;
+    const campaign = await this.campaignsService.findById(id);
+    if (!campaign) {
+      return res.status(404).json({ success: false, error: 'Campagne non trouvée' });
+    }
+
+    const accountId = req.accountId ?? campaign.accountId;
     if (!accountId) throw new Error('accountId manquant');
 
     try {
-      const campaign = await this.campaignsService.get(accountId, id);
-      if (!campaign) {
-        return { success: false, error: 'Campagne non trouvée' };
-      }
-
       const immediateOrScheduled = body?.immediateOrScheduled || 'immediate';
       const scheduledAt = body?.scheduledAt ? new Date(body.scheduledAt) : null;
 
@@ -265,10 +271,15 @@ export class CampaignsController {
       return res.status(200).json(result);
     } catch (error) {
       console.error('Send campaign error:', error);
-      return {
+      const status = error instanceof HttpException ? error.getStatus() : 500;
+      const message =
+        error instanceof HttpException
+          ? error.message
+          : "Une erreur s'est produite. Veuillez réessayer.";
+      return res.status(status).json({
         success: false,
-        error: "Une erreur s'est produite. Veuillez réessayer.",
-      };
+        error: message,
+      });
     }
   }
 

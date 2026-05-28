@@ -2,6 +2,20 @@ import { CampaignStatus, SendVariant } from '@prisma/client';
 import { CampaignsService } from './campaigns.service';
 
 describe('CampaignsService A/B flow', () => {
+  const previousTestRecipient = process.env.RESEND_TEST_RECIPIENT;
+
+  beforeAll(() => {
+    delete process.env.RESEND_TEST_RECIPIENT;
+  });
+
+  afterAll(() => {
+    if (previousTestRecipient === undefined) {
+      delete process.env.RESEND_TEST_RECIPIENT;
+    } else {
+      process.env.RESEND_TEST_RECIPIENT = previousTestRecipient;
+    }
+  });
+
   it('creates pending A/B sends and enqueues initial + evaluation jobs', async () => {
     const prisma = {
       campaign: {
@@ -38,9 +52,23 @@ describe('CampaignsService A/B flow', () => {
     const scheduleQueue = {
       add: jest.fn().mockResolvedValue(undefined),
     };
+    const contactsService = {
+      getSegmentContactsForCampaign: jest
+        .fn()
+        .mockResolvedValue(
+          Array.from({ length: 10 }).map((_, index) => ({
+            id: `contact-${index + 1}`,
+            email: `c${index + 1}@example.com`,
+            phone: null,
+            firstName: `Name${index + 1}`,
+            lastName: 'Test',
+          })),
+        ),
+    };
 
     const service = new CampaignsService(
       prisma as never,
+      contactsService as never,
       dispatchQueue as never,
       scheduleQueue as never,
     );
@@ -50,6 +78,10 @@ describe('CampaignsService A/B flow', () => {
     });
 
     expect(result.success).toBe(true);
+    expect(contactsService.getSegmentContactsForCampaign).toHaveBeenCalledWith(
+      'acc-1',
+      'seg-1',
+    );
     expect(prisma.send.createMany).toHaveBeenCalledTimes(1);
 
     const payload = prisma.send.createMany.mock.calls[0][0] as {
@@ -64,7 +96,7 @@ describe('CampaignsService A/B flow', () => {
     expect(prisma.campaign.update).toHaveBeenCalledWith({
       where: { id: 'camp-1' },
       data: {
-        status: CampaignStatus.SENT,
+        status: CampaignStatus.SENDING,
         scheduledAt: null,
         sentCount: 0,
         failedCount: 0,

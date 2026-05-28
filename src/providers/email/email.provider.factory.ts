@@ -47,6 +47,27 @@ class FailoverEmailProvider implements EmailProvider {
   }
 }
 
+class SingleEmailProvider implements EmailProvider {
+  constructor(private readonly primary: EmailProvider) {}
+
+  async send(to: string, subject: string, html: string) {
+    return this.primary.send(to, subject, html);
+  }
+
+  async sendBatch(contacts: { email: string }[], subject: string, html: string) {
+    let sent = 0;
+    let failed = 0;
+
+    for (const contact of contacts) {
+      const result = await this.send(contact.email, subject, html);
+      if (result.success) sent += 1;
+      else failed += 1;
+    }
+
+    return { sent, failed };
+  }
+}
+
 /**
  * Factory email basee sur EMAIL_PROVIDER.
  * Valeur par defaut: resend.
@@ -54,6 +75,13 @@ class FailoverEmailProvider implements EmailProvider {
 @Injectable()
 export class EmailProviderFactory {
   private readonly logger = new Logger(EmailProviderFactory.name);
+
+  private isProviderConfigured(name: EmailProviderName): boolean {
+    if (name === 'resend') {
+      return Boolean(process.env.RESEND_API_KEY);
+    }
+    return Boolean(process.env.BREVO_API_KEY);
+  }
 
   private resolveProviderOrder(): {
     primary: EmailProviderName;
@@ -85,8 +113,18 @@ export class EmailProviderFactory {
       `Email providers configured: primary=${primary}, secondary=${secondary}`,
     );
 
+    const primaryProvider = this.buildProvider(primary, overrides);
+    const secondaryConfigured = this.isProviderConfigured(secondary);
+
+    if (!secondaryConfigured) {
+      this.logger.warn(
+        `Secondary email provider (${secondary}) not configured, fallback disabled`,
+      );
+      return new SingleEmailProvider(primaryProvider);
+    }
+
     return new FailoverEmailProvider(
-      this.buildProvider(primary, overrides),
+      primaryProvider,
       this.buildProvider(secondary, overrides),
       this.logger,
       primary,
@@ -104,6 +142,7 @@ export class EmailProviderFactory {
       config: {
         resendApiKeyConfigured: Boolean(process.env.RESEND_API_KEY),
         brevoApiKeyConfigured: Boolean(process.env.BREVO_API_KEY),
+        fallbackEnabled: this.isProviderConfigured(secondary),
       },
     };
   }

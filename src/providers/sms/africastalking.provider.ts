@@ -25,6 +25,7 @@ export class AfricasTalkingProvider implements SmsProvider {
   private readonly apiKey: string;
   private readonly username: string;
   private readonly senderId: string;
+  private readonly baseUrl: string;
 
   constructor() {
     const apiKey = process.env.AFRICASTALKING_API_KEY;
@@ -40,6 +41,13 @@ export class AfricasTalkingProvider implements SmsProvider {
     this.apiKey = apiKey;
     this.username = username;
     this.senderId = senderId;
+    const configuredBaseUrl = process.env.AFRICASTALKING_BASE_URL?.trim();
+    this.baseUrl =
+      configuredBaseUrl && configuredBaseUrl.length > 0
+        ? configuredBaseUrl
+        : this.username.toLowerCase() === 'sandbox'
+          ? 'https://api.sandbox.africastalking.com'
+          : 'https://api.africastalking.com';
   }
 
   async send(to: string, message: string): Promise<SmsSendResult> {
@@ -51,18 +59,15 @@ export class AfricasTalkingProvider implements SmsProvider {
         from: this.senderId,
       });
 
-      const response = await fetch(
-        'https://api.africastalking.com/version1/messaging',
-        {
-          method: 'POST',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            apiKey: this.apiKey,
-          },
-          body: body.toString(),
+      const response = await fetch(`${this.baseUrl}/version1/messaging`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          apiKey: this.apiKey,
         },
-      );
+        body: body.toString(),
+      });
 
       if (!response.ok) {
         const text = await response.text();
