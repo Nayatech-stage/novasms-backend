@@ -35,7 +35,7 @@ async function main() {
         accountId: account.id,
         email: adminEmail,
         passwordHash: hashed,
-        role: 'admin',
+        role: 'Admin',
       },
     });
     console.log('Created user', user.id);
