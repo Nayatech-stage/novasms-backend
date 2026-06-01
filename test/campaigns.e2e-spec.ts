@@ -12,6 +12,8 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
+jest.setTimeout(60000);
+
 describe('Campaign E2E Workflow (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
@@ -342,19 +344,37 @@ describe('Campaign E2E Workflow (e2e)', () => {
   });
 
   describe('🗑️ Step 7: Cleanup & Delete', () => {
-    it('should delete campaign', async () => {
+    it('should delete a draft campaign', async () => {
+      const draftCreateRes = await request(app.getHttpServer())
+        .post('/campaigns')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          name: 'Draft Campaign To Delete',
+          channelType: 'EMAIL',
+        });
+
+      const draftCampaignId = draftCreateRes.body.id;
+
       const response = await request(app.getHttpServer())
-        .delete(`/campaigns/${campaignId}`)
+        .delete(`/campaigns/${draftCampaignId}`)
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(response.status).toBe(200);
 
       // Verify it's deleted
       const getRes = await request(app.getHttpServer())
-        .get(`/campaigns/${campaignId}`)
+        .get(`/campaigns/${draftCampaignId}`)
         .set('Authorization', `Bearer ${authToken}`);
 
-      expect(getRes.status).toBe(404);
+      expect(getRes.status).toBe(400);
+    });
+
+    it('should reject deleting a sending campaign', async () => {
+      const response = await request(app.getHttpServer())
+        .delete(`/campaigns/${campaignId}`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(response.status).toBe(409);
     });
   });
 

@@ -117,19 +117,33 @@ export class SmsProviderFactory {
 
   getProvider(overrides?: SmsProviderOverrides): SmsProvider {
     const { primary, secondary } = this.resolveProviderOrder();
-
     this.logger.log(
       `SMS providers configured: primary=${primary}, secondary=${secondary}`,
     );
 
     const primaryProvider = this.buildProvider(primary, overrides);
     const secondaryConfigured = this.isProviderConfigured(secondary);
+    const hasOverrides = Boolean(overrides && (overrides[primary] || overrides[secondary]));
 
-    if (!secondaryConfigured) {
+    // If secondary is not configured and no override provided, fallback disabled
+    const effectiveSecondaryConfigured = secondaryConfigured || Boolean(overrides && overrides[secondary]);
+
+    if (!effectiveSecondaryConfigured && !hasOverrides) {
       this.logger.warn(
         `Secondary SMS provider (${secondary}) not configured, fallback disabled`,
       );
       return new SingleSmsProvider(primaryProvider);
+    }
+
+    if (!effectiveSecondaryConfigured) {
+      // secondary override exists — use failover with override
+      return new FailoverSmsProvider(
+        primaryProvider,
+        this.buildProvider(secondary, overrides),
+        this.logger,
+        primary,
+        secondary,
+      );
     }
 
     return new FailoverSmsProvider(

@@ -68,10 +68,30 @@ export class CampaignsController {
   }
 
   @Get()
-  async list(@Request() req: TenantRequest) {
+  async list(
+    @Request() req: TenantRequest,
+    @Query('status') status?: string,
+    @Query('channel') channel?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+  ) {
     const accountId = req.accountId;
     if (!accountId) throw new Error('accountId manquant');
-    return { data: await this.campaignsService.list(accountId) };
+    return this.campaignsService.list(accountId, {
+      status,
+      channel,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      search,
+    });
+  }
+
+  @Post(':id/duplicate')
+  async duplicate(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new Error('accountId manquant');
+    return this.campaignsService.duplicateCampaign(accountId, id);
   }
 
   @Get(':id')
@@ -191,6 +211,19 @@ export class CampaignsController {
     } catch {
       res.status(404).json({ error: 'Image not found' });
     }
+  }
+
+  @Get('images/:fileName/presign')
+  async presignImage(
+    @Param('fileName') fileName: string,
+    @Query('expires') expires?: string,
+  ) {
+    const expiresSeconds = expires ? Number(expires) : 3600;
+    const url = await this.fileUploadService.getPresignedGetUrl(fileName, expiresSeconds);
+    if (!url) {
+      throw new HttpException('Presigned URL not available', 400);
+    }
+    return { url, expires: expiresSeconds };
   }
 
   @Get(':campaignId/images')

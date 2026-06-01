@@ -223,8 +223,9 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
-    const account = await this.prisma.account.findUnique({
-      where: { adminEmail: email },
+    const normalizedEmail = email.trim().toLowerCase();
+    const account = await this.prisma.account.findFirst({
+      where: { adminEmail: { equals: normalizedEmail, mode: 'insensitive' } },
     });
 
     if (!account) {
@@ -493,8 +494,8 @@ export class AuthService {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    const account = await this.prisma.account.findUnique({
-      where: { adminEmail: normalizedEmail },
+    const account = await this.prisma.account.findFirst({
+      where: { adminEmail: { equals: normalizedEmail, mode: 'insensitive' } },
       select: { id: true, adminEmail: true },
     });
 

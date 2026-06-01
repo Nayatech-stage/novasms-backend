@@ -2,8 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { EmailProvider } from './email.provider.interface';
 import { ResendProvider } from './resend.provider';
 import { BrevoProvider } from './brevo.provider';
+import { MockEmailProvider } from './mock.provider';
 
-type EmailProviderName = 'resend' | 'brevo';
+type EmailProviderName = 'resend' | 'brevo' | 'mock';
 
 type EmailProviderOverrides = Partial<Record<EmailProviderName, EmailProvider>>;
 
@@ -89,6 +90,10 @@ export class EmailProviderFactory {
   } {
     const selected = (process.env.EMAIL_PROVIDER || 'resend').toLowerCase();
 
+    if (selected === 'mock') {
+      return { primary: 'mock', secondary: 'mock' };
+    }
+
     if (selected === 'brevo') {
       return { primary: 'brevo', secondary: 'resend' };
     }
@@ -102,21 +107,39 @@ export class EmailProviderFactory {
   ): EmailProvider {
     if (overrides?.[name]) return overrides[name] as EmailProvider;
 
+    if (name === 'mock') return new MockEmailProvider();
     if (name === 'brevo') return new BrevoProvider();
     return new ResendProvider();
   }
 
   getProvider(overrides?: EmailProviderOverrides): EmailProvider {
     const { primary, secondary } = this.resolveProviderOrder();
+    const primaryConfigured = this.isProviderConfigured(primary);
+    const secondaryConfigured = this.isProviderConfigured(secondary);
+    const hasOverrides = Boolean(overrides && (overrides[primary] || overrides[secondary]));
 
     this.logger.log(
       `Email providers configured: primary=${primary}, secondary=${secondary}`,
     );
 
-    const primaryProvider = this.buildProvider(primary, overrides);
-    const secondaryConfigured = this.isProviderConfigured(secondary);
+    if (primary === 'mock') {
+      this.logger.warn('EMAIL_PROVIDER=mock, using local mock provider');
+      return new MockEmailProvider();
+    }
+    // If no provider credentials are configured and no overrides provided, use mock.
+    if (!primaryConfigured && !secondaryConfigured && !hasOverrides) {
+      this.logger.warn(
+        'No email provider credentials configured, using local mock provider',
+      );
+      return new MockEmailProvider();
+    }
 
-    if (!secondaryConfigured) {
+    const primaryProvider = this.buildProvider(primary, overrides);
+
+    // If secondary not configured but an override exists for it, treat as configured.
+    const effectiveSecondaryConfigured = secondaryConfigured || Boolean(overrides && overrides[secondary]);
+
+    if (!effectiveSecondaryConfigured) {
       this.logger.warn(
         `Secondary email provider (${secondary}) not configured, fallback disabled`,
       );
@@ -142,6 +165,7 @@ export class EmailProviderFactory {
       config: {
         resendApiKeyConfigured: Boolean(process.env.RESEND_API_KEY),
         brevoApiKeyConfigured: Boolean(process.env.BREVO_API_KEY),
+        emailProviderMock: primary === 'mock',
         fallbackEnabled: this.isProviderConfigured(secondary),
       },
     };

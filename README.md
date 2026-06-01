@@ -108,6 +108,23 @@ AFRICASTALKING_SENDER_ID=
 
 L'état courant des providers est exposé via `GET /api/status` et `GET /api/providers/health`.
 
+## MinIO (local object storage)
+
+We use MinIO for local development to host campaign images. The repository includes a MinIO service in `docker-compose.yml` which mirrors an S3-compatible endpoint.
+
+Quick start (from project root):
+
+```bash
+docker-compose up -d minio
+# wait a few seconds, then open the MinIO console (default credentials in apps/backend/.env.example)
+```
+
+Create the bucket named in `CAMPAIGN_IMAGE_BUCKET` (default `novasms-campaign-images`) and set it public if you want images to be served directly.
+
+When moving to staging/production, set `S3_ENDPOINT` to your storage's public URL and ensure `CAMPAIGN_IMAGE_BUCKET` points to the correct bucket. If you prefer private buckets, use the presign endpoint:
+
+`GET /api/campaigns/images/:fileName/presign?expires=3600` — returns a presigned GET URL for the image.
+
 ## Resources
 
 Check out a few resources that may come in handy when working with NestJS:

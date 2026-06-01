@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { join } from 'path';
 import * as fs from 'fs';
 import { randomUUID } from 'crypto';
@@ -10,6 +10,7 @@ import {
   S3Client,
   type GetObjectCommandOutput,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export interface UploadedFile {
   fieldname: string;
@@ -53,7 +54,7 @@ function resolveBool(value: string | undefined): boolean {
 }
 
 @Injectable()
-export class FileUploadService {
+export class FileUploadService implements OnModuleDestroy {
   private readonly logger = new Logger(FileUploadService.name);
   private readonly uploadDir = join(process.cwd(), 'uploads', 'campaigns');
   private readonly bucketName = process.env.CAMPAIGN_IMAGE_BUCKET?.trim();
@@ -71,6 +72,17 @@ export class FileUploadService {
     this.s3Client = this.createS3Client();
   }
 
+  onModuleDestroy() {
+    try {
+      if (this.s3Client && typeof (this.s3Client as any).destroy === 'function') {
+        (this.s3Client as any).destroy();
+        this.logger.log('Destroyed S3 client on module shutdown');
+      }
+    } catch (e) {
+      this.logger.warn('Error while destroying S3 client: ' + e);
+    }
+  }
+
   private getPublicApiBaseUrl(): string {
     return resolvePublicApiBaseUrl();
   }
@@ -80,7 +92,9 @@ export class FileUploadService {
       return null;
     }
 
-    const endpoint = process.env.CAMPAIGN_IMAGE_S3_ENDPOINT?.trim();
+    const endpoint =
+      process.env.S3_ENDPOINT?.trim() ||
+      process.env.CAMPAIGN_IMAGE_S3_ENDPOINT?.trim();
     const region = process.env.CAMPAIGN_IMAGE_S3_REGION?.trim() || 'us-east-1';
     const accessKeyId = process.env.CAMPAIGN_IMAGE_S3_ACCESS_KEY_ID?.trim();
     const secretAccessKey =
@@ -115,7 +129,9 @@ export class FileUploadService {
       return this.publicObjectBaseUrl;
     }
 
-    const endpoint = process.env.CAMPAIGN_IMAGE_S3_ENDPOINT?.trim();
+    const endpoint =
+      process.env.S3_ENDPOINT?.trim() ||
+      process.env.CAMPAIGN_IMAGE_S3_ENDPOINT?.trim();
     if (!endpoint || !this.bucketName) {
       return null;
     }
@@ -323,6 +339,23 @@ export class FileUploadService {
     fileName: string,
   ): Promise<{ buffer: Buffer; mimeType: string }> {
     return this.readStoredImage(fileName);
+  }
+
+  /**
+   * Generate a presigned GET URL for a campaign image when using object storage.
+   * Returns null if object storage is not configured or presigning is not possible.
+   */
+  async getPresignedGetUrl(fileName: string, expiresSeconds = 3600): Promise<string | null> {
+    if (!this.usesObjectStorage() || !this.s3Client || !this.bucketName) return null;
+
+    try {
+      const command = new GetObjectCommand({ Bucket: this.bucketName, Key: fileName });
+      const url = await getSignedUrl(this.s3Client, command, { expiresIn: expiresSeconds });
+      return url;
+    } catch (e) {
+      this.logger.warn(`Failed to generate presigned URL for ${fileName}: ${e}`);
+      return null;
+    }
   }
 
   async deleteCampaignImage(fileName: string): Promise<void> {

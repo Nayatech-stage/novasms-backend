@@ -1,5 +1,13 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument */
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Logger,
+} from '@nestjs/common';
+import { AutomationStatus, CampaignStatus, Prisma } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { redisConnection } from '../queues/import.queue';
 import { SegmentRecalculationService } from '../queues/segment.recalculation.service';
@@ -38,6 +46,7 @@ export class ContactsService {
   constructor(
     private prisma: PrismaService,
     private segmentRecalculationService: SegmentRecalculationService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   async createAuditLog(accountId: string, action: string, details: any) {
@@ -219,6 +228,11 @@ export class ContactsService {
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
     await this.invalidateContactCountCache(accountId);
+    this.eventEmitter.emit('contact.added', {
+      accountId,
+      contactId: c.id,
+      contact: c,
+    });
     return c;
   }
 
@@ -500,9 +514,144 @@ export class ContactsService {
   }
 
   async deleteSegment(accountId: string, id: string) {
-    const s = await this.prisma.segment.findFirst({ where: { id, accountId } });
-    if (!s) return null;
-    return this.prisma.segment.delete({ where: { id } });
+    const segment = await this.prisma.segment.findFirst({
+      where: { id, accountId },
+      select: { id: true },
+    });
+
+    if (!segment) {
+      return null;
+    }
+
+    const automationUsingSegment = await this.prisma.automation.findFirst({
+      where: {
+        accountId,
+        status: AutomationStatus.Active,
+        triggerType: 'segment_joined',
+        triggerConfig: {
+          path: ['segmentId'],
+          equals: id,
+        },
+      },
+      select: { id: true },
+    });
+
+    if (automationUsingSegment) {
+      throw new ConflictException(
+        'Ce segment est utilisé par une automatisation active',
+      );
+    }
+
+    const scheduledCampaignUsingSegment = await this.prisma.campaign.findFirst({
+      where: {
+        accountId,
+        segmentId: id,
+        status: CampaignStatus.SCHEDULED,
+      },
+      select: { id: true },
+    });
+
+    if (scheduledCampaignUsingSegment) {
+      throw new ConflictException(
+        'Ce segment est ciblé par une campagne planifiée',
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.campaign.updateMany({
+        where: {
+          accountId,
+          segmentId: id,
+          status: CampaignStatus.DRAFT,
+        },
+        data: { segmentId: null },
+      }),
+      this.prisma.segment.delete({ where: { id } }),
+    ]);
+
+    return { success: true };
+  }
+
+  async updateSegment(
+    accountId: string,
+    segmentId: string,
+    payload: {
+      name?: string;
+      logic?: SegmentLogic;
+      criteria?: SegmentCriterion[];
+      type?: 'dynamic' | 'static';
+      contactIds?: string[];
+    },
+  ) {
+    const existing = await this.prisma.segment.findFirst({
+      where: { id: segmentId, accountId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Segment non trouve');
+    }
+
+    const nextName = payload.name?.trim() || existing.name || 'Segment';
+    const nextType = payload.type || (existing.type as 'dynamic' | 'static');
+
+    if (nextType === 'static') {
+      const contactIds = Array.isArray(payload.contactIds)
+        ? Array.from(
+            new Set(
+              payload.contactIds.filter(
+                (id) => typeof id === 'string' && id.trim().length > 0,
+              ),
+            ),
+          )
+        : [];
+
+      const count = await this.prisma.contact.count({
+        where: {
+          accountId,
+          id: { in: contactIds },
+          optOut: false,
+        },
+      });
+
+      return this.prisma.segment.update({
+        where: { id: segmentId },
+        data: {
+          name: nextName,
+          type: 'static',
+          criteria: { contactIds },
+          contactCount: count,
+          lastCalculated: new Date(),
+        },
+      });
+    }
+
+    const rules = Array.isArray(payload.criteria)
+      ? payload.criteria
+      : this.normalizeSegmentCriteria(existing.criteria).rules;
+    const logic = payload.logic === 'OR' ? 'OR' : 'AND';
+
+    if (rules.length === 0) {
+      throw new BadRequestException('Le segment doit contenir au moins un critère');
+    }
+
+    const where = this.buildWhereForSegment(accountId, logic, rules);
+    const count = await this.prisma.contact.count({ where });
+
+    return this.prisma.segment.update({
+      where: { id: segmentId },
+      data: {
+        name: nextName,
+        type: 'dynamic',
+        criteria: { logic, rules } as Prisma.InputJsonValue,
+        contactCount: count,
+        lastCalculated: new Date(),
+      },
+    });
+  }
+
+  async getSegmentWithContacts(accountId: string, segmentId: string) {
+    const segments = await this.listSegmentsWithContacts(accountId);
+    return segments.find((segment) => segment.id === segmentId) ?? null;
   }
 
   /**

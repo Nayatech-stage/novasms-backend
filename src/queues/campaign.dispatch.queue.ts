@@ -41,6 +41,68 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
+function resolveCampaignImagePublicBaseUrl(): string | null {
+  const rawBaseUrl =
+    process.env.CAMPAIGN_IMAGE_PUBLIC_BASE_URL?.trim() ||
+    process.env.S3_ENDPOINT?.trim() ||
+    process.env.CAMPAIGN_IMAGE_S3_ENDPOINT?.trim();
+
+  if (!rawBaseUrl) {
+    return null;
+  }
+
+  const cleanedBaseUrl = rawBaseUrl.replace(/\/$/, '');
+  const bucketName = process.env.CAMPAIGN_IMAGE_BUCKET?.trim();
+
+  if (!bucketName || cleanedBaseUrl.endsWith(`/${bucketName}`)) {
+    return cleanedBaseUrl;
+  }
+
+  return `${cleanedBaseUrl}/${bucketName}`;
+}
+
+function extractCampaignImageFileName(src: string): string | null {
+  const cleanSrc = src.split('#')[0]?.split('?')[0] || src;
+  const fileName = cleanSrc.split('/').filter(Boolean).pop();
+  return fileName || null;
+}
+
+function shouldRewriteCampaignImageSource(src: string): boolean {
+  if (!src || src.startsWith('data:') || src.startsWith('cid:')) {
+    return false;
+  }
+
+  if (src.startsWith('/')) {
+    return true;
+  }
+
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(src);
+}
+
+function rewriteCampaignImageSource(src: string): string {
+  if (!shouldRewriteCampaignImageSource(src)) {
+    return src;
+  }
+
+  const publicBaseUrl = resolveCampaignImagePublicBaseUrl();
+  const fileName = extractCampaignImageFileName(src);
+
+  if (!publicBaseUrl || !fileName) {
+    return src;
+  }
+
+  return `${publicBaseUrl}/${fileName}`;
+}
+
+function rewriteCampaignEmailHtmlImageSources(html: string): string {
+  return html.replace(
+    /(<img\b[^>]*\bsrc=)(["'])([^"']+)(\2)/gi,
+    (_match, prefix: string, quote: string, src: string) => {
+      return `${prefix}${quote}${escapeHtml(rewriteCampaignImageSource(src))}${quote}`;
+    },
+  );
+}
+
 function personalizeText(
   value: string,
   context: { firstName?: string; companyName?: string; promoCode?: string },
@@ -85,7 +147,7 @@ function renderEmailBlock(
     const src = typeof content.src === 'string' ? content.src : '';
     const alt = typeof content.alt === 'string' ? content.alt : 'Image';
     if (!src) return '';
-    return `<div style="margin:0 0 12px;"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="max-width:100%; width:100%; height:auto; display:block; border:0; border-radius:12px;"/></div>`;
+    return `<div style="margin:0 0 12px;"><img src="${escapeHtml(rewriteCampaignImageSource(src))}" alt="${escapeHtml(alt)}" style="max-width:100%; width:100%; height:auto; display:block; border:0; border-radius:12px;"/></div>`;
   }
 
   if (type === 'button') {
@@ -121,7 +183,9 @@ function renderEmailBlock(
   }
 
   if (type === 'html') {
-    return typeof content.html === 'string' ? content.html : '';
+    return typeof content.html === 'string'
+      ? rewriteCampaignEmailHtmlImageSources(content.html)
+      : '';
   }
 
   if (type === 'product') {
@@ -147,7 +211,7 @@ function renderEmailBlock(
       <table role="presentation" width="100%" style="border-collapse:collapse; margin:0 0 12px; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
         <tr>
           <td style="padding:0;">
-            ${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(title)}" style="width:100%; max-width:100%; display:block; height:auto;"/>` : ''}
+            ${image ? `<img src="${escapeHtml(rewriteCampaignImageSource(image))}" alt="${escapeHtml(title)}" style="width:100%; max-width:100%; display:block; height:auto;"/>` : ''}
           </td>
         </tr>
         <tr>
@@ -400,6 +464,11 @@ export class CampaignDispatchProcessor extends WorkerHost {
               : effectiveVariant === 'A'
                 ? campaign.subjectA || campaign.subject || ''
                 : campaign.subject || '';
+          const personalizedSubject = personalizeText(subject, {
+            firstName: contact.firstName || undefined,
+            companyName: campaign.account?.companyName || undefined,
+            promoCode: campaign.promoCode || undefined,
+          });
 
           if (campaign.channelType === 'SMS') {
             if (!contact.phone) {
@@ -412,7 +481,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
             }
             await this.sendEmail(
               contact.email,
-              subject,
+              personalizedSubject,
               campaign.contentJson,
               content,
               {

@@ -4,12 +4,14 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import {
   Prisma,
   CampaignVariant,
   CampaignStatus,
   SendVariant,
+  AutomationStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -46,6 +48,14 @@ function extractRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   return value as Record<string, unknown>;
 }
+
+type CampaignListOptions = {
+  status?: string;
+  channel?: string;
+  page?: number;
+  limit?: number;
+  search?: string;
+};
 
 @Injectable()
 export class CampaignsService {
@@ -247,12 +257,47 @@ export class CampaignsService {
     return campaign;
   }
 
-  async list(accountId: string) {
-    return this.prisma.campaign.findMany({
-      where: { accountId },
-      orderBy: { createdAt: 'desc' },
-      include: { segment: { select: { name: true } } },
-    });
+  async list(accountId: string, options?: CampaignListOptions) {
+    const rawPage = Number(options?.page ?? 1);
+    const rawLimit = Number(options?.limit ?? 20);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 20;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.CampaignWhereInput = { accountId };
+
+    const statusInput = options?.status?.toUpperCase();
+    if (statusInput && statusInput in CampaignStatus) {
+      where.status = statusInput as CampaignStatus;
+    }
+
+    const channelInput = options?.channel?.toUpperCase();
+    if (channelInput) {
+      where.channelType = channelInput;
+    }
+
+    const search = options?.search?.trim();
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.campaign.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { segment: { select: { name: true } } },
+        skip,
+        take: limit,
+      }),
+      this.prisma.campaign.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+    };
   }
 
   async update(accountId: string, id: string, data: unknown) {
@@ -406,12 +451,88 @@ export class CampaignsService {
   async deleteCampaign(accountId: string, id: string) {
     const campaign = await this.prisma.campaign.findFirst({
       where: { id, accountId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!campaign) throw new BadRequestException('Campagne introuvable');
 
+    const deletableStatuses: CampaignStatus[] = [
+      CampaignStatus.DRAFT,
+      CampaignStatus.CANCELLED,
+      CampaignStatus.AUTOMATION,
+    ];
+    if (!deletableStatuses.includes(campaign.status)) {
+      throw new ConflictException('Impossible de supprimer une campagne déjà envoyée');
+    }
+
+    const activeAutomation = await this.prisma.automation.findFirst({
+      where: {
+        accountId,
+        campaignId: campaign.id,
+        status: AutomationStatus.Active,
+      },
+      select: { id: true },
+    });
+
+    if (activeAutomation) {
+      throw new ConflictException('Cette campagne est utilisée par une automatisation active');
+    }
+
     await this.prisma.campaign.delete({ where: { id: campaign.id } });
     return { success: true, id: campaign.id };
+  }
+
+  async duplicateCampaign(accountId: string, id: string) {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id, accountId },
+    });
+
+    if (!campaign) {
+      throw new NotFoundException('Campagne introuvable');
+    }
+
+    const duplicate = await this.prisma.campaign.create({
+      data: {
+        accountId,
+        name: `${campaign.name} (copie)`,
+        channelType: campaign.channelType,
+        status: CampaignStatus.DRAFT,
+        subject: campaign.subject,
+        subjectA: campaign.subjectA,
+        subjectB: campaign.subjectB,
+        content: campaign.content,
+        contentJson:
+          campaign.contentJson === null
+            ? Prisma.JsonNull
+            : (campaign.contentJson as Prisma.InputJsonValue),
+        abSplitPct: campaign.abSplitPct,
+        abTestDuration: campaign.abTestDuration,
+        segmentId: campaign.segmentId,
+        timezone: campaign.timezone,
+        bestSendTime:
+          campaign.bestSendTime === null
+            ? Prisma.JsonNull
+            : (campaign.bestSendTime as Prisma.InputJsonValue),
+        estimatedCost: campaign.estimatedCost,
+        estimatedRecipients: campaign.estimatedRecipients,
+        promoCode: campaign.promoCode,
+        scheduledAt: null,
+        abWinner: null,
+        sentCount: 0,
+        deliveredCount: 0,
+        openedCount: 0,
+        clickedCount: 0,
+        failedCount: 0,
+        sentCountA: 0,
+        sentCountB: 0,
+        openedCountA: 0,
+        openedCountB: 0,
+        clickedCountA: 0,
+        clickedCountB: 0,
+      },
+      include: { segment: { select: { name: true } } },
+    });
+
+    return duplicate;
   }
 
   async get(accountId: string, id: string) {

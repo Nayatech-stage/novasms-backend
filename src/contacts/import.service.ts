@@ -1,14 +1,22 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { importQueue } from '../queues/import.queue';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import * as readline from 'readline';
 
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
   private readonly BATCH_SIZE = 500; // RG-08: performance — traitement par lots
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Lance un import asynchrone via BullMQ
@@ -123,6 +131,11 @@ export class ImportService {
         // Ajouter aux existants pour détection intra-batch
         if (contact.email) existingSet.add(contact.email);
         if (phoneKey) existingSet.add(phoneKey);
+        this.eventEmitter.emit('contact.added', {
+          accountId,
+          contactId: created.id,
+          contact: created,
+        });
         result.details.push({
           row: contact,
           status: 'created',
@@ -191,6 +204,70 @@ export class ImportService {
       ...globalResult,
       total,
     });
+
+    return {
+      jobId: `import-${accountId}-${Date.now()}`,
+      status: 'completed',
+      report: {
+        fileName,
+        totalRecords: report.totalRecords,
+        successCount: report.successCount,
+        duplicateCount: report.duplicateCount,
+        errorCount: report.errorCount,
+      },
+    };
+  }
+
+  /**
+   * Traite un fichier NDJSON d'import ligne par ligne en batches
+   * Evite de charger tout le fichier en mémoire pour les gros imports
+   */
+  async processFullImportFromFile(accountId: string, fileName: string, filePath: string) {
+    const rl = readline.createInterface({
+      input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+
+    const globalResult = { success: 0, duplicates: 0, errors: 0 };
+    const batch: any[] = [];
+
+    for await (const line of rl) {
+      if (!line) continue;
+      try {
+        const row = JSON.parse(line);
+        batch.push(row);
+      } catch (e) {
+        this.logger.warn('Skipping invalid JSON line during import streaming');
+        globalResult.errors++;
+      }
+
+      if (batch.length >= this.BATCH_SIZE) {
+        const r = await this.processBatch(accountId, batch.splice(0));
+        globalResult.success += r.success;
+        globalResult.duplicates += r.duplicates;
+        globalResult.errors += r.errors;
+      }
+    }
+
+    if (batch.length > 0) {
+      const r = await this.processBatch(accountId, batch.splice(0));
+      globalResult.success += r.success;
+      globalResult.duplicates += r.duplicates;
+      globalResult.errors += r.errors;
+    }
+
+    // Générer le rapport final
+    const report = await this.generateReport(accountId, fileName, {
+      ...globalResult,
+      total: globalResult.success + globalResult.duplicates + globalResult.errors,
+    });
+
+    // Tentative de cleanup du fichier temporaire
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (e) {
+      // ignore
+    }
 
     return {
       jobId: `import-${accountId}-${Date.now()}`,

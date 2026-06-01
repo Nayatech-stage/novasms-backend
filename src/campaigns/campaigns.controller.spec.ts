@@ -88,3 +88,38 @@ describe('CampaignsController providersHealth', () => {
     expect(smsProviderFactory.getHealthStatus).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('CampaignsController presign endpoint', () => {
+  it('returns a presigned url when available', async () => {
+    const fileUploadService = {
+      getPresignedGetUrl: jest.fn().mockResolvedValue('https://signed.url/image.png'),
+    } as unknown as FileUploadService;
+
+    const controller = new CampaignsController(
+      {} as unknown as CampaignsService,
+      fileUploadService,
+      {} as unknown as EmailProviderFactory,
+      {} as unknown as SmsProviderFactory,
+    );
+
+    const res = await controller.presignImage('image.png', '600');
+    expect(fileUploadService.getPresignedGetUrl).toHaveBeenCalledWith('image.png', 600);
+    expect(res).toEqual({ url: 'https://signed.url/image.png', expires: 600 });
+  });
+
+  it('throws when presign is not available', async () => {
+    const fileUploadService = {
+      getPresignedGetUrl: jest.fn().mockResolvedValue(null),
+    } as unknown as FileUploadService;
+
+    const controller = new CampaignsController(
+      {} as unknown as CampaignsService,
+      fileUploadService,
+      {} as unknown as EmailProviderFactory,
+      {} as unknown as SmsProviderFactory,
+    );
+
+    await expect(controller.presignImage('image.png')).rejects.toBeTruthy();
+    expect(fileUploadService.getPresignedGetUrl).toHaveBeenCalledWith('image.png', 3600);
+  });
+});
