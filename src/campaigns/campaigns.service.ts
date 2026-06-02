@@ -45,6 +45,25 @@ function asOptionalDecimal(value: unknown): Prisma.Decimal | undefined {
   }
 }
 
+function normalizeSmsPhoneNumber(phone: string): string | null {
+  const cleaned = phone.replace(/[\s().-]/g, '').trim();
+
+  if (/^\+\d{8,15}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  if (/^00\d{8,15}$/.test(cleaned)) {
+    const normalized = `+${cleaned.slice(2)}`;
+    return /^\+\d{8,15}$/.test(normalized) ? normalized : null;
+  }
+
+  if (/^\d{8,15}$/.test(cleaned)) {
+    return `+${cleaned}`;
+  }
+
+  return null;
+}
+
 function extractRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return undefined;
@@ -190,7 +209,7 @@ export class CampaignsService {
     // Basic validation for SMS content: require STOP to unsubscribe
     if (channelType === 'SMS') {
       const contentText = (body.content || '') as string;
-      if (!/\bSTOP\b/i.test(contentText)) {
+      if (contentText.trim().length > 0 && !/\bSTOP\b/i.test(contentText)) {
         // rollback created campaign to keep DB clean for tests
         await this.prisma.campaign.delete({ where: { id: campaign.id } });
         throw new BadRequestException(
@@ -857,13 +876,13 @@ export class CampaignsService {
       const shouldRestrictEmailDelivery =
         campaign.channelType === 'EMAIL' && Boolean(emailTestRecipient);
 
-      const deliveryContacts = shouldRestrictEmailDelivery
+      const emailDeliveryContacts = shouldRestrictEmailDelivery
         ? contacts.filter(
             (contact) => contact.email && contact.email === emailTestRecipient,
           )
         : contacts;
 
-      if (shouldRestrictEmailDelivery && deliveryContacts.length === 0) {
+      if (shouldRestrictEmailDelivery && emailDeliveryContacts.length === 0) {
         return {
           success: false,
           error: `Aucun contact du segment ne correspond au destinataire de test ${emailTestRecipient}`,
@@ -872,11 +891,51 @@ export class CampaignsService {
 
       if (
         shouldRestrictEmailDelivery &&
-        deliveryContacts.length < contacts.length
+        emailDeliveryContacts.length < contacts.length
       ) {
         this.logger.log(
-          `Email test mode: restricting delivery from ${contacts.length} contacts to ${deliveryContacts.length} contact(s) matching ${emailTestRecipient}`,
+          `Email test mode: restricting delivery from ${contacts.length} contacts to ${emailDeliveryContacts.length} contact(s) matching ${emailTestRecipient}`,
         );
+      }
+
+      const smsRejectedContacts: Array<{ id: string; phone: string | null }> =
+        [];
+      const deliveryContacts =
+        campaign.channelType === 'SMS'
+          ? emailDeliveryContacts.filter((contact) => {
+              const normalizedPhone =
+                typeof contact.phone === 'string'
+                  ? normalizeSmsPhoneNumber(contact.phone)
+                  : null;
+
+              if (!normalizedPhone) {
+                smsRejectedContacts.push({
+                  id: contact.id,
+                  phone: contact.phone ?? null,
+                });
+                return false;
+              }
+
+              return true;
+            })
+          : emailDeliveryContacts;
+
+      if (campaign.channelType === 'SMS' && smsRejectedContacts.length > 0) {
+        const samples = smsRejectedContacts
+          .slice(0, 5)
+          .map((contact) => `${contact.id}:${contact.phone || 'no-phone'}`)
+          .join(', ');
+        this.logger.warn(
+          `SMS delivery: excluded ${smsRejectedContacts.length} contact(s) without a valid phone number for campaign ${campaignId}${samples ? ` (${samples}${smsRejectedContacts.length > 5 ? ', ...' : ''})` : ''}`,
+        );
+      }
+
+      if (campaign.channelType === 'SMS' && deliveryContacts.length === 0) {
+        return {
+          success: false,
+          error:
+            'Aucun contact avec un numéro de téléphone valide dans ce segment',
+        };
       }
 
       // Immediate sends must enter SENDING so dispatch workers can process PENDING rows.
@@ -998,13 +1057,13 @@ export class CampaignsService {
       const resObj: Record<string, unknown> = {
         success: true,
         campaignId,
-        contactCount: contacts.length,
+        contactCount: deliveryContacts.length,
         abTestSampleSize,
         abRemainingSize:
           isABCampaign && abTestSampleSize > 0
-            ? contacts.length - abTestSampleSize
+            ? deliveryContacts.length - abTestSampleSize
             : 0,
-        message: `Campagne prête à être envoyée à ${contacts.length} contact(s)`,
+        message: `Campagne prête à être envoyée à ${deliveryContacts.length} contact(s)`,
       };
 
       // Indicate immediate sending status for controller/tests
@@ -1017,9 +1076,13 @@ export class CampaignsService {
       return resObj;
     } catch (error) {
       this.logger.error(`Error sending campaign: ${String(error)}`);
+      const errorMessage =
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "Une erreur s'est produite. Veuillez réessayer.";
       return {
         success: false,
-        error: "Une erreur s'est produite. Veuillez réessayer.",
+        error: errorMessage,
       };
     }
   }
@@ -1036,6 +1099,14 @@ export class CampaignsService {
       const body = asRecord(data);
       if (!body) {
         throw new BadRequestException('Données invalides');
+      }
+
+      // Temporary debug: log incoming payload (truncated) to diagnose 400 on saveDraft
+      try {
+        const bodyPreview = JSON.stringify(body).slice(0, 2000);
+        this.logger.debug('[DEBUG] saveDraft received body: ' + bodyPreview);
+      } catch (err) {
+        this.logger.debug('[DEBUG] saveDraft received body (could not stringify)');
       }
 
       const updateData: Prisma.CampaignUpdateInput = {

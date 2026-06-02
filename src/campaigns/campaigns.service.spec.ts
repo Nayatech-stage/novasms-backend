@@ -127,4 +127,5 @@ describe('CampaignsService A/B flow', () => {
 
     expect(scheduleQueue.add).not.toHaveBeenCalled();
   });
+
 });

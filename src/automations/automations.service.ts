@@ -1169,6 +1169,12 @@ export class AutomationsService {
         campaign.content?.trim() || fallbackContent,
         {
           firstName: contact.firstName ?? undefined,
+          lastName: contact.lastName ?? undefined,
+          fullName:
+            [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() ||
+            undefined,
+          email: contact.email ?? undefined,
+          phone: contact.phone ?? undefined,
           companyName: (campaign as any)?.account?.companyName || undefined,
           promoCode: (campaign as any)?.promoCode || undefined,
         },

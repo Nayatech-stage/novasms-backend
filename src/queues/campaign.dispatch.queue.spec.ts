@@ -145,7 +145,7 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
             contact: {
               id: 'contact-1',
               email: 'recipient@example.com',
-              phone: '+22501020304',
+              phone: '+225 01 02 03 04',
               firstName: 'Romuald',
               optOut: false,
             },
@@ -194,6 +194,8 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
         campaignId: 'camp-2',
       }),
     );
+    const smsProvider = smsProviderFactory.getProvider();
+    expect(smsProvider.send).toHaveBeenCalledWith('+22501020304', 'Hello');
     expect(prisma.campaign.updateMany).toHaveBeenCalledWith({
       where: { id: 'camp-2' },
       data: { status: CampaignStatus.SENT },

@@ -103,12 +103,47 @@ function rewriteCampaignEmailHtmlImageSources(html: string): string {
   );
 }
 
+function normalizeSmsPhoneNumber(phone: string): string | null {
+  const cleaned = phone.replace(/[\s().-]/g, '').trim();
+
+  if (/^\+\d{8,15}$/.test(cleaned)) {
+    return cleaned;
+  }
+
+  if (/^00\d{8,15}$/.test(cleaned)) {
+    const normalized = `+${cleaned.slice(2)}`;
+    return /^\+\d{8,15}$/.test(normalized) ? normalized : null;
+  }
+
+  if (/^\d{8,15}$/.test(cleaned)) {
+    return `+${cleaned}`;
+  }
+
+  return null;
+}
+
 function personalizeText(
   value: string,
-  context: { firstName?: string; companyName?: string; promoCode?: string },
+  context: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    promoCode?: string;
+  },
 ): string {
+  const safeFullName =
+    context.fullName ||
+    [context.firstName, context.lastName].filter(Boolean).join(' ').trim();
+
   return value
     .replace(/\{\{(?:pr[eé]nom|firstName)\}\}/gi, context.firstName || '')
+    .replace(/\{\{(?:nom|lastName|surname)\}\}/gi, context.lastName || '')
+    .replace(/\{\{(?:fullName|nomComplet|name)\}\}/gi, safeFullName || '')
+    .replace(/\{\{(?:email|e-mail)\}\}/gi, context.email || '')
+    .replace(/\{\{(?:phone|tel|telephone)\}\}/gi, context.phone || '')
     .replace(
       /\{\{(?:shopName|boutique|nomBoutique)\}\}/gi,
       context.companyName || '',
@@ -118,7 +153,15 @@ function personalizeText(
 
 function renderEmailBlock(
   block: Record<string, unknown>,
-  context: { firstName?: string; companyName?: string; promoCode?: string },
+  context: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    promoCode?: string;
+  },
 ): string {
   const type = typeof block.type === 'string' ? block.type : '';
   const content = asRecord(block.content) || {};
@@ -282,7 +325,15 @@ function renderEmailBlock(
 function renderEmailHtml(
   contentJson: unknown,
   fallbackText: string,
-  context: { firstName?: string; companyName?: string; promoCode?: string },
+  context: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    promoCode?: string;
+  },
 ): string {
   const body = asRecord(contentJson);
   const blocks = Array.isArray(body?.blocks)
@@ -393,6 +444,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
             email: true,
             phone: true,
             firstName: true,
+            lastName: true,
             optOut: true,
           },
         },
@@ -433,23 +485,24 @@ export class CampaignDispatchProcessor extends WorkerHost {
             return { success: false };
           }
 
-          let content = campaign.content || '';
-          // EN-1688: Message personalization with fallback values
-          if (contact.firstName)
-            content = content.replace(
-              /{{pr[eé]nom|firstName}}/gi,
-              contact.firstName,
-            );
-          if (campaign.account?.companyName)
-            content = content.replace(
-              /{{shopName|boutique|nomBoutique}}/gi,
-              campaign.account.companyName,
-            );
-          if (campaign.promoCode)
-            content = content.replace(
-              /{{promoCode|code_promo}}/gi,
-              campaign.promoCode,
-            );
+          const contactContext = {
+            firstName: contact.firstName || undefined,
+            lastName: contact.lastName || undefined,
+            fullName:
+              [contact.firstName, contact.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim() || undefined,
+            email: contact.email || undefined,
+            phone: contact.phone || undefined,
+            companyName: campaign.account?.companyName || undefined,
+            promoCode: campaign.promoCode || undefined,
+          };
+
+          const content = personalizeText(
+            campaign.content || '',
+            contactContext,
+          );
 
           const effectiveVariant = remainingContacts
             ? variant
@@ -466,6 +519,14 @@ export class CampaignDispatchProcessor extends WorkerHost {
                 : campaign.subject || '';
           const personalizedSubject = personalizeText(subject, {
             firstName: contact.firstName || undefined,
+            lastName: contact.lastName || undefined,
+            fullName:
+              [contact.firstName, contact.lastName]
+                .filter(Boolean)
+                .join(' ')
+                .trim() || undefined,
+            email: contact.email || undefined,
+            phone: contact.phone || undefined,
             companyName: campaign.account?.companyName || undefined,
             promoCode: campaign.promoCode || undefined,
           });
@@ -474,7 +535,11 @@ export class CampaignDispatchProcessor extends WorkerHost {
             if (!contact.phone) {
               throw new Error('Contact phone missing');
             }
-            await this.sendSms(contact.phone, content);
+            const normalizedPhone = normalizeSmsPhoneNumber(contact.phone);
+            if (!normalizedPhone) {
+              throw new Error('Contact phone invalid');
+            }
+            await this.sendSms(normalizedPhone, content);
           } else {
             if (!contact.email) {
               throw new Error('Contact email missing');
@@ -484,11 +549,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
               personalizedSubject,
               campaign.contentJson,
               content,
-              {
-                firstName: contact.firstName || undefined,
-                companyName: campaign.account?.companyName || undefined,
-                promoCode: campaign.promoCode || undefined,
-              },
+              contactContext,
             );
           }
 
@@ -754,11 +815,17 @@ export class CampaignDispatchProcessor extends WorkerHost {
   }
 
   private async sendSms(phone: string, content: string) {
-    const provider = this.smsProviderFactory.getProvider();
-    const result = await provider.send(phone, content);
+    try {
+      const provider = this.smsProviderFactory.getProvider();
+      const result = await provider.send(phone, content);
 
-    if (!result.success) {
-      throw new Error(result.error || 'SMS provider send failed');
+      if (!result.success) {
+        throw new Error(result.error || 'SMS provider send failed');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`SMS send to ${phone} failed: ${msg}`);
+      throw err;
     }
   }
 
@@ -767,7 +834,15 @@ export class CampaignDispatchProcessor extends WorkerHost {
     subject: string,
     contentJson: unknown,
     fallbackText: string,
-    context: { firstName?: string; companyName?: string; promoCode?: string },
+    context: {
+      firstName?: string;
+      lastName?: string;
+      fullName?: string;
+      email?: string;
+      phone?: string;
+      companyName?: string;
+      promoCode?: string;
+    },
   ) {
     const provider = this.emailProviderFactory.getProvider();
     const html = renderEmailHtml(contentJson, fallbackText, context);

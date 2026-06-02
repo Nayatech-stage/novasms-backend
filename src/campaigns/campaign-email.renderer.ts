@@ -78,10 +78,29 @@ function rewriteCampaignEmailHtmlImageSources(html: string): string {
 
 function personalizeText(
   value: string,
-  context: { firstName?: string; companyName?: string; promoCode?: string },
+  context: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    promoCode?: string;
+  },
 ): string {
+  const safeFullName =
+    context.fullName ||
+    [context.firstName, context.lastName].filter(Boolean).join(' ').trim();
+
   return value
     .replace(/\{\{(?:pr[eé]nom|firstName)\}\}/gi, context.firstName || '')
+    .replace(/\{\{(?:nom|lastName|surname)\}\}/gi, context.lastName || '')
+    .replace(
+      /\{\{(?:fullName|nomComplet|name)\}\}/gi,
+      safeFullName || '',
+    )
+    .replace(/\{\{(?:email|e-mail)\}\}/gi, context.email || '')
+    .replace(/\{\{(?:phone|tel|telephone)\}\}/gi, context.phone || '')
     .replace(
       /\{\{(?:shopName|boutique|nomBoutique)\}\}/gi,
       context.companyName || '',
@@ -91,7 +110,15 @@ function personalizeText(
 
 function renderEmailBlock(
   block: Record<string, unknown>,
-  context: { firstName?: string; companyName?: string; promoCode?: string },
+  context: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    promoCode?: string;
+  },
 ): string {
   const type = typeof block.type === 'string' ? block.type : '';
   const content = asRecord(block.content) || {};
@@ -255,7 +282,15 @@ function renderEmailBlock(
 export function renderCampaignEmailHtml(
   contentJson: unknown,
   fallbackText: string,
-  context: { firstName?: string; companyName?: string; promoCode?: string },
+  context: {
+    firstName?: string;
+    lastName?: string;
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+    promoCode?: string;
+  },
 ): string {
   const body = asRecord(contentJson);
   const blocks = Array.isArray(body?.blocks)
