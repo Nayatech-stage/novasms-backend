@@ -1,4 +1,12 @@
-import { Controller, Post, Body, Logger, Headers, BadRequestException, Req } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Logger,
+  Headers,
+  BadRequestException,
+  Req,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import * as crypto from 'crypto';
 import { ApiTags, ApiBody } from '@nestjs/swagger';
@@ -36,23 +44,42 @@ export class WebhookController {
       },
     },
   })
-  async receiveEmailWebhook(@Headers() headers: Record<string, string | string[]>, @Body() payload: WebhookPayload, @Req() req: Request) {
+  async receiveEmailWebhook(
+    @Headers() headers: Record<string, string | string[]>,
+    @Body() payload: WebhookPayload,
+    @Req() req: Request,
+  ) {
     this.logger.log(`Webhook reçu: ${payload.event}`);
 
     // Optional HMAC verification if a secret is configured
     const secret = process.env.RESEND_WEBHOOK_SECRET;
     if (secret) {
       try {
-        const sigHeader = (headers['x-resend-signature'] || headers['resend-signature'] || headers['x-signature'] || headers['signature']) as string | undefined;
+        const sigHeader = (headers['x-resend-signature'] ||
+          headers['resend-signature'] ||
+          headers['x-signature'] ||
+          headers['signature']) as string | undefined;
         if (sigHeader) {
-          const payloadString = req['rawBody'] ? req['rawBody'].toString() : JSON.stringify(payload);
-          const expected = crypto.createHmac('sha256', secret).update(payloadString).digest('hex');
-          if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sigHeader))) {
+          const payloadString = req['rawBody']
+            ? req['rawBody'].toString()
+            : JSON.stringify(payload);
+          const expected = crypto
+            .createHmac('sha256', secret)
+            .update(payloadString)
+            .digest('hex');
+          if (
+            !crypto.timingSafeEqual(
+              Buffer.from(expected),
+              Buffer.from(sigHeader),
+            )
+          ) {
             this.logger.warn('Webhook signature mismatch');
             throw new BadRequestException('Invalid webhook signature');
           }
         } else {
-          this.logger.warn('RESEND_WEBHOOK_SECRET set but no signature header provided');
+          this.logger.warn(
+            'RESEND_WEBHOOK_SECRET set but no signature header provided',
+          );
         }
       } catch (err) {
         this.logger.error('Webhook signature verification failed');

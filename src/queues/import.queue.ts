@@ -5,7 +5,9 @@ import { ImportService } from '../contacts/import.service';
 
 // In test environment we avoid creating real Redis connections and workers
 // to prevent open handles and noisy logs during Jest runs.
-const isTest = process.env.NODE_ENV === 'test' || typeof process.env.JEST_WORKER_ID !== 'undefined';
+const isTest =
+  process.env.NODE_ENV === 'test' ||
+  typeof process.env.JEST_WORKER_ID !== 'undefined';
 
 let connection: any = null;
 export let importQueue: any;
@@ -23,7 +25,7 @@ if (isTest) {
   importQueue = {
     add: async () => undefined,
     close: async () => undefined,
-  } as unknown as Queue;
+  };
 
   importWorker = null;
 } else {
@@ -35,7 +37,9 @@ if (isTest) {
   // Connection lifecycle logging to help debug Redis issues
   connection.on('connect', () => console.log('[REDIS] connect'));
   connection.on('ready', () => console.log('[REDIS] ready'));
-  connection.on('error', (err) => console.error('[REDIS] error', err && err.message));
+  connection.on('error', (err) =>
+    console.error('[REDIS] error', err && err.message),
+  );
   connection.on('close', () => console.log('[REDIS] closed'));
   connection.on('reconnecting', () => console.log('[REDIS] reconnecting'));
 
@@ -51,7 +55,6 @@ if (isTest) {
 
   redisConnection = connection;
   // Worker initialization is provided via exported function below.
-
 }
 
 // Le worker doit avoir accès à ImportService — à initialiser dans main.ts ou un module dédié
@@ -60,7 +63,11 @@ export function initImportWorker(importService: ImportService) {
     // In E2E tests we bypass Redis and execute the queued import immediately
     // so the flow can still validate end-to-end report generation.
     importQueue.add = async (_name: string, data: any) => {
-      return importService.processFullImport(data.accountId, data.fileName, data.mappedData);
+      return importService.processFullImport(
+        data.accountId,
+        data.fileName,
+        data.mappedData,
+      );
     };
 
     return null;
@@ -72,7 +79,14 @@ export function initImportWorker(importService: ImportService) {
       const { accountId, fileName, mappedData } = job.data;
 
       // Délègue le traitement complet au service
-      console.log('[IMPORT WORKER] starting job', job.id, 'file:', fileName, 'rows:', (mappedData || []).length);
+      console.log(
+        '[IMPORT WORKER] starting job',
+        job.id,
+        'file:',
+        fileName,
+        'rows:',
+        (mappedData || []).length,
+      );
       return importService.processFullImport(accountId, fileName, mappedData);
     },
     {
@@ -85,7 +99,14 @@ export function initImportWorker(importService: ImportService) {
 
   importWorker.on('active', (job) => {
     try {
-      console.log('[IMPORT WORKER] active job', job.id, 'name', job.name, 'dataKeys', Object.keys(job.data || {}));
+      console.log(
+        '[IMPORT WORKER] active job',
+        job.id,
+        'name',
+        job.name,
+        'dataKeys',
+        Object.keys(job.data || {}),
+      );
     } catch (e) {
       console.log('[IMPORT WORKER] active job (error logging job data)');
     }
@@ -105,14 +126,12 @@ export function initImportWorker(importService: ImportService) {
 
   return importWorker;
 }
-  // Graceful shutdown (only in non-test environments)
-  if (!isTest) {
-    process.on('SIGINT', () => {
-      void (async () => {
-        if (importWorker) await importWorker.close();
-        await importQueue.close();
-      })();
-    });
-  }
-
-
+// Graceful shutdown (only in non-test environments)
+if (!isTest) {
+  process.on('SIGINT', () => {
+    void (async () => {
+      if (importWorker) await importWorker.close();
+      await importQueue.close();
+    })();
+  });
+}

@@ -109,7 +109,7 @@ export class SmsProviderFactory {
     name: SmsProviderName,
     overrides?: SmsProviderOverrides,
   ): SmsProvider {
-    if (overrides?.[name]) return overrides[name] as SmsProvider;
+    if (overrides?.[name]) return overrides[name];
 
     if (name === 'africastalking') return new AfricasTalkingProvider();
     return new TwilioProvider();
@@ -123,10 +123,13 @@ export class SmsProviderFactory {
 
     const primaryProvider = this.buildProvider(primary, overrides);
     const secondaryConfigured = this.isProviderConfigured(secondary);
-    const hasOverrides = Boolean(overrides && (overrides[primary] || overrides[secondary]));
+    const hasOverrides = Boolean(
+      overrides && (overrides[primary] || overrides[secondary]),
+    );
 
     // If secondary is not configured and no override provided, fallback disabled
-    const effectiveSecondaryConfigured = secondaryConfigured || Boolean(overrides && overrides[secondary]);
+    const effectiveSecondaryConfigured =
+      secondaryConfigured || Boolean(overrides && overrides[secondary]);
 
     if (!effectiveSecondaryConfigured && !hasOverrides) {
       this.logger.warn(

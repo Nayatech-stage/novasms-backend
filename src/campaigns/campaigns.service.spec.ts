@@ -53,24 +53,22 @@ describe('CampaignsService A/B flow', () => {
       add: jest.fn().mockResolvedValue(undefined),
     };
     const contactsService = {
-      getSegmentContactsForCampaign: jest
-        .fn()
-        .mockResolvedValue(
-          Array.from({ length: 10 }).map((_, index) => ({
-            id: `contact-${index + 1}`,
-            email: `c${index + 1}@example.com`,
-            phone: null,
-            firstName: `Name${index + 1}`,
-            lastName: 'Test',
-          })),
-        ),
+      getSegmentContactsForCampaign: jest.fn().mockResolvedValue(
+        Array.from({ length: 10 }).map((_, index) => ({
+          id: `contact-${index + 1}`,
+          email: `c${index + 1}@example.com`,
+          phone: null,
+          firstName: `Name${index + 1}`,
+          lastName: 'Test',
+        })),
+      ),
     };
 
     const service = new CampaignsService(
-      prisma as never,
-      contactsService as never,
-      dispatchQueue as never,
-      scheduleQueue as never,
+      prisma,
+      contactsService,
+      dispatchQueue,
+      scheduleQueue,
     );
 
     const result = await service.sendCampaign('acc-1', 'camp-1', {
@@ -84,9 +82,7 @@ describe('CampaignsService A/B flow', () => {
     );
     expect(prisma.send.createMany).toHaveBeenCalledTimes(1);
 
-    const payload = prisma.send.createMany.mock.calls[0][0] as {
-      data: Array<{ variant: SendVariant }>;
-    };
+    const payload = prisma.send.createMany.mock.calls[0][0];
     const variants = payload.data.map((row) => row.variant);
 
     expect(variants.filter((v) => v === SendVariant.A)).toHaveLength(2);

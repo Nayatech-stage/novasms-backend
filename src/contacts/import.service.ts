@@ -222,7 +222,11 @@ export class ImportService {
    * Traite un fichier NDJSON d'import ligne par ligne en batches
    * Evite de charger tout le fichier en mémoire pour les gros imports
    */
-  async processFullImportFromFile(accountId: string, fileName: string, filePath: string) {
+  async processFullImportFromFile(
+    accountId: string,
+    fileName: string,
+    filePath: string,
+  ) {
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: 'utf8' }),
       crlfDelay: Infinity,
@@ -259,7 +263,8 @@ export class ImportService {
     // Générer le rapport final
     const report = await this.generateReport(accountId, fileName, {
       ...globalResult,
-      total: globalResult.success + globalResult.duplicates + globalResult.errors,
+      total:
+        globalResult.success + globalResult.duplicates + globalResult.errors,
     });
 
     // Tentative de cleanup du fichier temporaire

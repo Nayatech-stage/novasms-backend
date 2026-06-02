@@ -297,7 +297,11 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
     expect(emailSend).toHaveBeenCalledTimes(1);
     const [, subject, html] = emailSend.mock.calls[0];
     expect(subject).toBe('Maya - Promo spéciale');
-    expect(html).toContain('https://storage-staging.novasms.com/campaigns/banner.png');
-    expect(html).toContain('https://storage-staging.novasms.com/campaigns/footer.png');
+    expect(html).toContain(
+      'https://storage-staging.novasms.com/campaigns/banner.png',
+    );
+    expect(html).toContain(
+      'https://storage-staging.novasms.com/campaigns/footer.png',
+    );
   });
 });

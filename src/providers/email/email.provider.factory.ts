@@ -34,7 +34,11 @@ class FailoverEmailProvider implements EmailProvider {
     }
   }
 
-  async sendBatch(contacts: { email: string }[], subject: string, html: string) {
+  async sendBatch(
+    contacts: { email: string }[],
+    subject: string,
+    html: string,
+  ) {
     let sent = 0;
     let failed = 0;
 
@@ -55,7 +59,11 @@ class SingleEmailProvider implements EmailProvider {
     return this.primary.send(to, subject, html);
   }
 
-  async sendBatch(contacts: { email: string }[], subject: string, html: string) {
+  async sendBatch(
+    contacts: { email: string }[],
+    subject: string,
+    html: string,
+  ) {
     let sent = 0;
     let failed = 0;
 
@@ -105,7 +113,7 @@ export class EmailProviderFactory {
     name: EmailProviderName,
     overrides?: EmailProviderOverrides,
   ): EmailProvider {
-    if (overrides?.[name]) return overrides[name] as EmailProvider;
+    if (overrides?.[name]) return overrides[name];
 
     if (name === 'mock') return new MockEmailProvider();
     if (name === 'brevo') return new BrevoProvider();
@@ -116,7 +124,9 @@ export class EmailProviderFactory {
     const { primary, secondary } = this.resolveProviderOrder();
     const primaryConfigured = this.isProviderConfigured(primary);
     const secondaryConfigured = this.isProviderConfigured(secondary);
-    const hasOverrides = Boolean(overrides && (overrides[primary] || overrides[secondary]));
+    const hasOverrides = Boolean(
+      overrides && (overrides[primary] || overrides[secondary]),
+    );
 
     this.logger.log(
       `Email providers configured: primary=${primary}, secondary=${secondary}`,
@@ -137,7 +147,8 @@ export class EmailProviderFactory {
     const primaryProvider = this.buildProvider(primary, overrides);
 
     // If secondary not configured but an override exists for it, treat as configured.
-    const effectiveSecondaryConfigured = secondaryConfigured || Boolean(overrides && overrides[secondary]);
+    const effectiveSecondaryConfigured =
+      secondaryConfigured || Boolean(overrides && overrides[secondary]);
 
     if (!effectiveSecondaryConfigured) {
       this.logger.warn(

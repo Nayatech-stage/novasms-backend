@@ -1,4 +1,13 @@
-import { Body, Controller, Post, Request, UseGuards, BadRequestException, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Request,
+  UseGuards,
+  BadRequestException,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { ContactsService } from './contacts/contacts.service';
 import { SegmentCreateSchema } from './contacts/dto/segment.dto';
@@ -33,7 +42,10 @@ export class SegmentsController {
         message: `Segment "${parsed.name}" cree pour ${segment.contactCount} contacts`,
       };
     } catch (e: any) {
-      throw new BadRequestException({ message: 'Echec creation', errors: e.errors || [e.message] });
+      throw new BadRequestException({
+        message: 'Echec creation',
+        errors: e.errors || [e.message],
+      });
     }
   }
 }

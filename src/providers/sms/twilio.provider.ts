@@ -61,7 +61,10 @@ export class TwilioProvider implements SmsProvider {
 
       if (!response.ok) {
         const text = await response.text();
-        return { success: false, error: `Twilio HTTP ${response.status}: ${text}` };
+        return {
+          success: false,
+          error: `Twilio HTTP ${response.status}: ${text}`,
+        };
       }
 
       const data = (await response.json()) as TwilioMessageResponse;

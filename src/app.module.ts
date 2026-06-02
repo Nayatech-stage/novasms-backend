@@ -20,7 +20,9 @@ import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 import { WhatsappProviderFactory } from './providers/whatsapp/whatsapp.provider.factory';
 
-const isTestEnvironment = process.env.NODE_ENV === 'test' || typeof process.env.JEST_WORKER_ID !== 'undefined';
+const isTestEnvironment =
+  process.env.NODE_ENV === 'test' ||
+  typeof process.env.JEST_WORKER_ID !== 'undefined';
 
 @Module({
   imports: [

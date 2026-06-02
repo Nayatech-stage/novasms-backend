@@ -28,12 +28,14 @@ describe('Import Worker E2E', () => {
     initImportWorker(importService);
 
     // Create account
-    const res = await request(app.getHttpServer()).post('/auth/register').send({
-      companyName: 'Import Test Co',
-      adminEmail: `import-test-${Date.now()}@test.local`,
-      password: 'Test123!@#',
-      country: 'CI',
-    });
+    const res = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({
+        companyName: 'Import Test Co',
+        adminEmail: `import-test-${Date.now()}@test.local`,
+        password: 'Test123!@#',
+        country: 'CI',
+      });
 
     accountId = res.body.account.id;
     authToken = res.body.access_token;
@@ -63,10 +65,11 @@ describe('Import Worker E2E', () => {
     const startMs = Date.now();
     let report: any = null;
     while (Date.now() - startMs < maxMs) {
-      // eslint-disable-next-line no-await-in-loop
-      report = await prisma.importReport.findFirst({ where: { accountId, fileName } });
+      report = await prisma.importReport.findFirst({
+        where: { accountId, fileName },
+      });
       if (report) break;
-      // eslint-disable-next-line no-await-in-loop
+
       await new Promise((r) => setTimeout(r, 500));
     }
 

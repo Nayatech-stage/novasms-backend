@@ -31,7 +31,11 @@ export class BrevoProvider implements EmailProvider {
     this.fromName = process.env.BREVO_FROM_NAME || 'NovaSMS';
   }
 
-  async send(to: string, subject: string, html: string): Promise<EmailSendResult> {
+  async send(
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<EmailSendResult> {
     try {
       const payload = {
         sender: {
@@ -55,13 +59,17 @@ export class BrevoProvider implements EmailProvider {
 
       if (!response.ok) {
         const text = await response.text();
-        return { success: false, error: `Brevo HTTP ${response.status}: ${text}` };
+        return {
+          success: false,
+          error: `Brevo HTTP ${response.status}: ${text}`,
+        };
       }
 
       const data = (await response.json()) as BrevoSendResponse;
       return { success: true, messageId: data.messageId };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Brevo send failed';
+      const message =
+        error instanceof Error ? error.message : 'Brevo send failed';
       this.logger.error(`Brevo send error: ${message}`);
       return { success: false, error: message };
     }

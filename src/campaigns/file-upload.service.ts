@@ -74,7 +74,10 @@ export class FileUploadService implements OnModuleDestroy {
 
   onModuleDestroy() {
     try {
-      if (this.s3Client && typeof (this.s3Client as any).destroy === 'function') {
+      if (
+        this.s3Client &&
+        typeof (this.s3Client as any).destroy === 'function'
+      ) {
         (this.s3Client as any).destroy();
         this.logger.log('Destroyed S3 client on module shutdown');
       }
@@ -220,17 +223,19 @@ export class FileUploadService implements OnModuleDestroy {
         select: { mimeType: true },
       });
 
-      const response = (await this.s3Client.send(
+      const response = await this.s3Client.send(
         new GetObjectCommand({
           Bucket: this.bucketName,
           Key: fileName,
         }),
-      )) as GetObjectCommandOutput;
+      );
 
       return {
         buffer: await this.bufferFromBody(response.Body),
         mimeType:
-          response.ContentType || imageRecord?.mimeType || 'application/octet-stream',
+          response.ContentType ||
+          imageRecord?.mimeType ||
+          'application/octet-stream',
       };
     }
 
@@ -345,15 +350,26 @@ export class FileUploadService implements OnModuleDestroy {
    * Generate a presigned GET URL for a campaign image when using object storage.
    * Returns null if object storage is not configured or presigning is not possible.
    */
-  async getPresignedGetUrl(fileName: string, expiresSeconds = 3600): Promise<string | null> {
-    if (!this.usesObjectStorage() || !this.s3Client || !this.bucketName) return null;
+  async getPresignedGetUrl(
+    fileName: string,
+    expiresSeconds = 3600,
+  ): Promise<string | null> {
+    if (!this.usesObjectStorage() || !this.s3Client || !this.bucketName)
+      return null;
 
     try {
-      const command = new GetObjectCommand({ Bucket: this.bucketName, Key: fileName });
-      const url = await getSignedUrl(this.s3Client, command, { expiresIn: expiresSeconds });
+      const command = new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: fileName,
+      });
+      const url = await getSignedUrl(this.s3Client, command, {
+        expiresIn: expiresSeconds,
+      });
       return url;
     } catch (e) {
-      this.logger.warn(`Failed to generate presigned URL for ${fileName}: ${e}`);
+      this.logger.warn(
+        `Failed to generate presigned URL for ${fileName}: ${e}`,
+      );
       return null;
     }
   }

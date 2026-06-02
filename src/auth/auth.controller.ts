@@ -111,7 +111,7 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Rafraîchir les tokens d\'authentification' })
+  @ApiOperation({ summary: "Rafraîchir les tokens d'authentification" })
   async refresh(@Body() body: { refreshToken: string }) {
     return this.authService.refreshTokens(body.refreshToken);
   }

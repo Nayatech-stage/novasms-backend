@@ -36,19 +36,28 @@ describe('Automations with BullMQ (integration)', () => {
     });
 
     // mark email verified
-    await prisma.account.update({ where: { adminEmail: email }, data: { emailVerified: true } });
+    await prisma.account.update({
+      where: { adminEmail: email },
+      data: { emailVerified: true },
+    });
 
-    const loginResp = await request(app.getHttpServer()).post('/auth/login').send({ email, motDePasse: password });
+    const loginResp = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email, motDePasse: password });
     authToken = loginResp.body.accessToken || loginResp.body.access_token;
 
-    const account = await prisma.account.findUnique({ where: { adminEmail: email } });
+    const account = await prisma.account.findUnique({
+      where: { adminEmail: email },
+    });
     if (!account) throw new Error('account not created');
     accountId = account.id;
   });
 
   afterAll(async () => {
     if (accountId) {
-      await prisma.workflowExecution.deleteMany({ where: { automation: { accountId } } });
+      await prisma.workflowExecution.deleteMany({
+        where: { automation: { accountId } },
+      });
       await prisma.automation.deleteMany({ where: { accountId } });
       await prisma.campaign.deleteMany({ where: { accountId } });
       await prisma.contact.deleteMany({ where: { accountId } });
@@ -62,7 +71,11 @@ describe('Automations with BullMQ (integration)', () => {
     const contactResp = await request(app.getHttpServer())
       .post('/contacts')
       .set('Authorization', `Bearer ${authToken}`)
-      .send({ email: `bm-${Date.now()}@novasms.test`, firstName: 'E2E', lastName: 'Bull' })
+      .send({
+        email: `bm-${Date.now()}@novasms.test`,
+        firstName: 'E2E',
+        lastName: 'Bull',
+      })
       .expect(201);
 
     const contactId = contactResp.body.id as string;
@@ -71,7 +84,13 @@ describe('Automations with BullMQ (integration)', () => {
     const autoResp = await request(app.getHttpServer())
       .post('/automations')
       .set('Authorization', `Bearer ${authToken}`)
-      .send({ name: 'BullMQ Integration', trigger: 'api', delaySeconds: 0, channel: 'Email', status: 'Active' })
+      .send({
+        name: 'BullMQ Integration',
+        trigger: 'api',
+        delaySeconds: 0,
+        channel: 'Email',
+        status: 'Active',
+      })
       .expect(201);
 
     const automationId = autoResp.body.id as string;
@@ -89,7 +108,9 @@ describe('Automations with BullMQ (integration)', () => {
     const deadline = Date.now() + 15000;
     let report: any = null;
     while (Date.now() < deadline) {
-      const r = await request(app.getHttpServer()).get(`/automations/${automationId}/report`).set('Authorization', `Bearer ${authToken}`);
+      const r = await request(app.getHttpServer())
+        .get(`/automations/${automationId}/report`)
+        .set('Authorization', `Bearer ${authToken}`);
       report = r.body;
       if (report && report.completed > 0) break;
       await new Promise((res) => setTimeout(res, 500));
@@ -97,9 +118,13 @@ describe('Automations with BullMQ (integration)', () => {
 
     expect(report).toBeTruthy();
     expect(report.total).toBeGreaterThanOrEqual(1);
-    expect(report.completed + report.running + report.failed).toBeGreaterThanOrEqual(1);
+    expect(
+      report.completed + report.running + report.failed,
+    ).toBeGreaterThanOrEqual(1);
     // verify the specific execution transitioned to Completed in DB
-    const exec = await prisma.workflowExecution.findUnique({ where: { id: executionId } });
+    const exec = await prisma.workflowExecution.findUnique({
+      where: { id: executionId },
+    });
     expect(exec).toBeTruthy();
     expect(['Completed', 'Running', 'Failed']).toContain(exec?.status);
   });

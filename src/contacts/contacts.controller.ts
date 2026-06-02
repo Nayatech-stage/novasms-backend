@@ -124,11 +124,16 @@ export class ContactsController {
   }
 
   @Post('import/start')
-  @ApiOperation({ summary: "Démarrer un import par chunks (retourne fileId)" })
-  async startImport(@Body() body: { fileName?: string }, @Request() req: TenantRequest) {
+  @ApiOperation({ summary: 'Démarrer un import par chunks (retourne fileId)' })
+  async startImport(
+    @Body() body: { fileName?: string },
+    @Request() req: TenantRequest,
+  ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    const fileId = (globalThis as any).crypto?.randomUUID?.() || `f-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    const fileId =
+      (globalThis as any).crypto?.randomUUID?.() ||
+      `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
     await fs.promises.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${fileId}.ndjson`);
@@ -138,14 +143,15 @@ export class ContactsController {
   }
 
   @Post('import/chunk')
-  @ApiOperation({ summary: 'Envoyer un chunk d\'import (rows en JSON array)' })
+  @ApiOperation({ summary: "Envoyer un chunk d'import (rows en JSON array)" })
   async uploadImportChunk(
     @Body() body: { fileId: string; rows: Array<Record<string, unknown>> },
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    if (!body.fileId || !Array.isArray(body.rows)) throw new BadRequestException('fileId ou rows manquant');
+    if (!body.fileId || !Array.isArray(body.rows))
+      throw new BadRequestException('fileId ou rows manquant');
 
     const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
     const filePath = path.join(dir, `${body.fileId}.ndjson`);
@@ -162,7 +168,9 @@ export class ContactsController {
   }
 
   @Post('import/complete')
-  @ApiOperation({ summary: 'Finaliser l\'import: assembler et lancer le traitement' })
+  @ApiOperation({
+    summary: "Finaliser l'import: assembler et lancer le traitement",
+  })
   async completeImport(
     @Body() body: { fileId: string; fileName: string },
     @Request() req: TenantRequest,
@@ -181,13 +189,20 @@ export class ContactsController {
 
     // Lance le traitement streaming dans le service
     const fileName = body.fileName || `import-${body.fileId}.ndjson`;
-    const result = await this.importService.processFullImportFromFile(accountId, fileName, filePath);
+    const result = await this.importService.processFullImportFromFile(
+      accountId,
+      fileName,
+      filePath,
+    );
     return { success: true, result };
   }
 
   @Get('import/:jobId')
   @ApiOperation({ summary: "Récupérer le statut d'un import" })
-  async getImportStatus(@Param('jobId') jobId: string, @Request() req: TenantRequest) {
+  async getImportStatus(
+    @Param('jobId') jobId: string,
+    @Request() req: TenantRequest,
+  ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
 
@@ -200,7 +215,7 @@ export class ContactsController {
     // If completed, try to return the job return value if available
     if (state === 'completed') {
       // job.returnvalue may contain the report if the worker returned it
-      const report = (job as any).returnvalue || null;
+      const report = job.returnvalue || null;
       return { success: true, status: 'completed', report };
     }
 
@@ -398,7 +413,10 @@ export class ContactsController {
   async getSegment(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    const segment = await this.contactsService.getSegmentWithContacts(accountId, id);
+    const segment = await this.contactsService.getSegmentWithContacts(
+      accountId,
+      id,
+    );
     if (!segment) throw new NotFoundException('Segment non trouve');
     return { segment };
   }
@@ -420,7 +438,11 @@ export class ContactsController {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
 
-    const updated = await this.contactsService.updateSegment(accountId, id, body);
+    const updated = await this.contactsService.updateSegment(
+      accountId,
+      id,
+      body,
+    );
     await this.contactsService.createAuditLog(accountId, 'segment_updated', {
       segmentId: id,
       name: updated.name,

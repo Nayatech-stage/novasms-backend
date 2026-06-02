@@ -1,8 +1,9 @@
-import { Injectable, type ExecutionContext } from '@nestjs/common';
+import { Injectable, type ExecutionContext, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
+  private readonly logger = new Logger(JwtAuthGuard.name);
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<{
       path?: string;
@@ -38,15 +39,31 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       request.method === 'POST' &&
       /\/api\/campaigns$/.test(requestPath);
 
-    if (
-      isPublicRoute ||
-      isPublicCampaignImageRoute ||
-      isDevImageUploadRoute ||
-      isDevCampaignCreateRoute
-    ) {
+    if (isPublicRoute || isPublicCampaignImageRoute || isDevImageUploadRoute) {
       return true;
     }
 
-    return (await super.canActivate(context)) as boolean;
+    // For development-only campaign create route: if the client provided an
+    // Authorization header, run the normal auth flow so `req.user` and
+    // subsequently `req.accountId` can be populated by the TenantInterceptor.
+    if (isDevCampaignCreateRoute) {
+      const req2 = context.switchToHttp().getRequest();
+      const authHeader = req2.headers?.authorization || req2.headers?.Authorization;
+      if (!authHeader) {
+        return true;
+      }
+      // if auth header present, fallthrough to super.canActivate
+    }
+
+    const result = (await super.canActivate(context)) as boolean;
+    try {
+      const req = context.switchToHttp().getRequest();
+      // Log basic user/account info for debugging tenant issues in dev
+      this.logger.debug(`JwtAuthGuard canActivate result=${result} user=${JSON.stringify(req.user || {})} accountId=${req.accountId}`);
+    } catch (err) {
+      this.logger.debug('JwtAuthGuard: failed to log user info');
+    }
+
+    return result;
   }
 }

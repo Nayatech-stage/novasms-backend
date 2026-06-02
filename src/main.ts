@@ -12,11 +12,13 @@ async function bootstrap() {
   // Préfixe global pour toutes les routes API
   app.setGlobalPrefix('api');
   // Capture raw body to allow strict webhook HMAC verification when needed
-  app.use(bodyParser.json({
-    verify: (req: any, _res, buf: Buffer) => {
-      req.rawBody = buf;
-    },
-  }));
+  app.use(
+    bodyParser.json({
+      verify: (req: any, _res, buf: Buffer) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.enableCors({

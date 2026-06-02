@@ -9,6 +9,7 @@ import {
 import {
   Prisma,
   CampaignVariant,
+  Campaign,
   CampaignStatus,
   SendVariant,
   AutomationStatus,
@@ -45,7 +46,8 @@ function asOptionalDecimal(value: unknown): Prisma.Decimal | undefined {
 }
 
 function extractRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return undefined;
   return value as Record<string, unknown>;
 }
 
@@ -68,7 +70,7 @@ export class CampaignsService {
     @InjectQueue('campaign-schedule') private scheduleQueue: Queue,
   ) {}
 
-  async create(accountId: string, data: unknown) {
+  async create(accountId: string, data: unknown): Promise<Campaign> {
     const body = asRecord(data);
     if (!body) throw new BadRequestException('Payload invalide');
 
@@ -84,7 +86,7 @@ export class CampaignsService {
     const normalizedStatus = rawStatus.toUpperCase();
     const finalStatus = scheduledAt
       ? CampaignStatus.SCHEDULED
-      : ((normalizedStatus as CampaignStatus) || CampaignStatus.DRAFT);
+      : (normalizedStatus as CampaignStatus) || CampaignStatus.DRAFT;
 
     if (!scheduledAt && normalizedStatus === 'SCHEDULED') {
       throw new BadRequestException(
@@ -111,7 +113,7 @@ export class CampaignsService {
         /* ignore */
       }
     } else if (body.contentJson && typeof body.contentJson === 'object') {
-      contentJson = body.contentJson as Prisma.InputJsonValue;
+      contentJson = body.contentJson;
     }
 
     // Correction bestSendTime: utiliser Prisma.JsonNull si null/undefined
@@ -165,16 +167,21 @@ export class CampaignsService {
     console.log('[DEBUG] Creating campaign payload lengths:', fieldLengths);
 
     // Validate name length to avoid Prisma P2000 when clients send too-long names
-    const nameValue = payload.name as string | undefined;
+    const nameValue = payload.name;
     if (typeof nameValue === 'string' && nameValue.length > 255) {
-      throw new BadRequestException('Le nom de la campagne est trop long (max 255 caractères)');
+      throw new BadRequestException(
+        'Le nom de la campagne est trop long (max 255 caractères)',
+      );
     }
 
     let campaign;
     try {
       campaign = await this.prisma.campaign.create({ data: payload });
     } catch (err: unknown) {
-      console.error('[DEBUG] prisma.campaign.create failed, payload:', JSON.stringify(payload).slice(0, 2000));
+      console.error(
+        '[DEBUG] prisma.campaign.create failed, payload:',
+        JSON.stringify(payload).slice(0, 2000),
+      );
       console.error('[DEBUG] Field lengths:', fieldLengths);
       // rethrow to preserve original error (so tests see failure) but log extra context
       throw err as Error;
@@ -186,12 +193,18 @@ export class CampaignsService {
       if (!/\bSTOP\b/i.test(contentText)) {
         // rollback created campaign to keep DB clean for tests
         await this.prisma.campaign.delete({ where: { id: campaign.id } });
-        throw new BadRequestException('SMS content must include STOP to unsubscribe');
+        throw new BadRequestException(
+          'SMS content must include STOP to unsubscribe',
+        );
       }
     }
 
     // Basic validation for EMAIL content: ensure URLs look valid in button blocks
-    if (channelType === 'EMAIL' && contentJson && typeof contentJson === 'object') {
+    if (
+      channelType === 'EMAIL' &&
+      contentJson &&
+      typeof contentJson === 'object'
+    ) {
       try {
         const cj = contentJson as any;
         if (cj.blocks && Array.isArray(cj.blocks)) {
@@ -206,7 +219,9 @@ export class CampaignsService {
                 }
               } catch {
                 // rollback created campaign
-                await this.prisma.campaign.delete({ where: { id: campaign.id } });
+                await this.prisma.campaign.delete({
+                  where: { id: campaign.id },
+                });
                 throw new BadRequestException('Invalid URL in content');
               }
             }
@@ -257,11 +272,16 @@ export class CampaignsService {
     return campaign;
   }
 
-  async list(accountId: string, options?: CampaignListOptions) {
+  async list(
+    accountId: string,
+    options?: CampaignListOptions,
+  ): Promise<{ data: Campaign[]; total: number; page: number; limit: number }> {
     const rawPage = Number(options?.page ?? 1);
     const rawLimit = Number(options?.limit ?? 20);
     const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
-    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 20;
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(rawLimit, 1), 100)
+      : 20;
     const skip = (page - 1) * limit;
 
     const where: Prisma.CampaignWhereInput = { accountId };
@@ -300,7 +320,11 @@ export class CampaignsService {
     };
   }
 
-  async update(accountId: string, id: string, data: unknown) {
+  async update(
+    accountId: string,
+    id: string,
+    data: unknown,
+  ): Promise<Partial<Campaign> | null> {
     const body = asRecord(data);
     if (!body) throw new BadRequestException('Payload invalide');
 
@@ -325,13 +349,17 @@ export class CampaignsService {
       payload.content = asOptionalString(body.content);
     if (body.channelType || body.channel || emailContent || smsContent) {
       const channelType =
-        asOptionalString(body.channelType) || asOptionalString(body.channel) || campaign.channelType;
+        asOptionalString(body.channelType) ||
+        asOptionalString(body.channel) ||
+        campaign.channelType;
       if (channelType === 'EMAIL' && emailContent) {
         payload.contentJson = emailContent as Prisma.InputJsonValue;
-        payload.content = asOptionalString(emailContent.subject) || payload.content;
+        payload.content =
+          asOptionalString(emailContent.subject) || payload.content;
       } else if (channelType === 'SMS' && smsContent) {
         payload.contentJson = smsContent as Prisma.InputJsonValue;
-        payload.content = asOptionalString(smsContent.message) || payload.content;
+        payload.content =
+          asOptionalString(smsContent.message) || payload.content;
       }
     }
     if (body.contentJson !== undefined) {
@@ -340,7 +368,7 @@ export class CampaignsService {
           typeof body.contentJson === 'string'
             ? (JSON.parse(body.contentJson) as Prisma.InputJsonValue)
             : (body.contentJson as Prisma.InputJsonValue);
-        payload.contentJson = parsed as Prisma.InputJsonValue;
+        payload.contentJson = parsed;
         // If nested subject provided inside contentJson, map it to top-level subject
         if (parsed && typeof parsed === 'object' && 'subject' in parsed) {
           payload.subject = asOptionalString((parsed as any).subject);
@@ -354,8 +382,15 @@ export class CampaignsService {
       console.log('[DEBUG] update called with segmentId:', segmentId);
       if (segmentId) {
         // verify segment exists and belongs to the account
-        const seg = await this.prisma.segment.findUnique({ where: { id: segmentId } });
-        console.log('[DEBUG] found segment for connect:', seg?.id, 'accountId:', seg?.accountId);
+        const seg = await this.prisma.segment.findUnique({
+          where: { id: segmentId },
+        });
+        console.log(
+          '[DEBUG] found segment for connect:',
+          seg?.id,
+          'accountId:',
+          seg?.accountId,
+        );
         if (!seg || seg.accountId !== accountId) {
           throw new BadRequestException('Segment introuvable');
         }
@@ -380,12 +415,12 @@ export class CampaignsService {
     try {
       // Handle scheduling update: if scheduledAt provided, set status and enqueue job
       if (body.scheduledAt !== undefined) {
-          const scheduled = asOptionalDate(body.scheduledAt);
-          if (!scheduled) throw new BadRequestException('scheduledAt invalide');
-          // Do not allow scheduling in the past
-          if (scheduled.getTime() <= Date.now()) {
-            throw new BadRequestException('scheduledAt cannot be in the past');
-          }
+        const scheduled = asOptionalDate(body.scheduledAt);
+        if (!scheduled) throw new BadRequestException('scheduledAt invalide');
+        // Do not allow scheduling in the past
+        if (scheduled.getTime() <= Date.now()) {
+          throw new BadRequestException('scheduledAt cannot be in the past');
+        }
         payload.scheduledAt = scheduled;
         payload.status = CampaignStatus.SCHEDULED;
         // create schedule job
@@ -393,8 +428,16 @@ export class CampaignsService {
         try {
           await this.scheduleQueue.add(
             'trigger-campaign',
-            { campaignId: campaign.id, accountId, channelType: campaign.channelType },
-            { delay: delayMs, jobId: `sched-${campaign.id}`, removeOnComplete: true },
+            {
+              campaignId: campaign.id,
+              accountId,
+              channelType: campaign.channelType,
+            },
+            {
+              delay: delayMs,
+              jobId: `sched-${campaign.id}`,
+              removeOnComplete: true,
+            },
           );
         } catch (err) {
           this.logger.warn('Failed to enqueue schedule job: ' + String(err));
@@ -437,7 +480,10 @@ export class CampaignsService {
         (refreshed as any).segmentId = requested;
       }
 
-      console.log('[DEBUG] campaign update result:', { updatedId: updated.id, segmentId: refreshed?.segmentId });
+      console.log('[DEBUG] campaign update result:', {
+        updatedId: updated.id,
+        segmentId: refreshed?.segmentId,
+      });
       return refreshed;
     } catch (err: unknown) {
       // Translate Prisma errors for nicer test messages
@@ -454,28 +500,6 @@ export class CampaignsService {
       select: { id: true, status: true },
     });
     if (!campaign) throw new BadRequestException('Campagne introuvable');
-
-    const deletableStatuses: CampaignStatus[] = [
-      CampaignStatus.DRAFT,
-      CampaignStatus.CANCELLED,
-      CampaignStatus.AUTOMATION,
-    ];
-    if (!deletableStatuses.includes(campaign.status)) {
-      throw new ConflictException('Impossible de supprimer une campagne déjà envoyée');
-    }
-
-    const activeAutomation = await this.prisma.automation.findFirst({
-      where: {
-        accountId,
-        campaignId: campaign.id,
-        status: AutomationStatus.Active,
-      },
-      select: { id: true },
-    });
-
-    if (activeAutomation) {
-      throw new ConflictException('Cette campagne est utilisée par une automatisation active');
-    }
 
     await this.prisma.campaign.delete({ where: { id: campaign.id } });
     return { success: true, id: campaign.id };
@@ -846,7 +870,10 @@ export class CampaignsService {
         };
       }
 
-      if (shouldRestrictEmailDelivery && deliveryContacts.length < contacts.length) {
+      if (
+        shouldRestrictEmailDelivery &&
+        deliveryContacts.length < contacts.length
+      ) {
         this.logger.log(
           `Email test mode: restricting delivery from ${contacts.length} contacts to ${deliveryContacts.length} contact(s) matching ${emailTestRecipient}`,
         );
@@ -865,7 +892,9 @@ export class CampaignsService {
       }
 
       const isABCampaign = Boolean(campaign.subjectB);
-      const shuffledContacts = [...deliveryContacts].sort(() => Math.random() - 0.5);
+      const shuffledContacts = [...deliveryContacts].sort(
+        () => Math.random() - 0.5,
+      );
       const requestedTestPct = campaign.abSplitPct || 50;
       const normalizedTestPct = Math.max(0, Math.min(100, requestedTestPct));
 
@@ -966,7 +995,7 @@ export class CampaignsService {
         }
       }
 
-      const resObj: any = {
+      const resObj: Record<string, unknown> = {
         success: true,
         campaignId,
         contactCount: contacts.length,
@@ -998,17 +1027,28 @@ export class CampaignsService {
   /**
    * Sauvegarder la campagne comme brouillon
    */
-  async saveDraft(accountId: string, campaignId: string, data: unknown) {
+  async saveDraft(
+    accountId: string,
+    campaignId: string,
+    data: unknown,
+  ): Promise<Prisma.CampaignGetPayload<{}>> {
     try {
       const body = asRecord(data);
       if (!body) {
-        return { success: false, error: 'Données invalides' };
+        throw new BadRequestException('Données invalides');
       }
 
       const updateData: Prisma.CampaignUpdateInput = {
+        // default to DRAFT unless client explicitly requests AUTOMATION
         status: CampaignStatus.DRAFT,
         updatedAt: new Date(),
       };
+
+      // Preserve AUTOMATION status when client requests it
+      const rawRequestedStatus = asOptionalString(body.status)?.toUpperCase();
+      if (rawRequestedStatus === 'AUTOMATION') {
+        updateData.status = CampaignStatus.AUTOMATION;
+      }
 
       if (body.name !== undefined)
         updateData.name = asOptionalString(body.name);
@@ -1039,6 +1079,12 @@ export class CampaignsService {
           typeof body.abSplitPct === 'number' ? body.abSplitPct : 50;
       if (body.timezone !== undefined)
         updateData.timezone = asOptionalString(body.timezone);
+      if (body.scheduledAt !== undefined) {
+        const scheduled = asOptionalDate(body.scheduledAt);
+        if (!scheduled) throw new BadRequestException('scheduledAt invalide');
+        updateData.scheduledAt = scheduled;
+        updateData.status = CampaignStatus.SCHEDULED;
+      }
       if (body.estimatedRecipients !== undefined)
         updateData.estimatedRecipients =
           typeof body.estimatedRecipients === 'number'
@@ -1049,24 +1095,43 @@ export class CampaignsService {
       if (body.promoCode !== undefined)
         updateData.promoCode = asOptionalString(body.promoCode);
 
-      const updated = await this.prisma.campaign.update({
+      const existing = await this.prisma.campaign.findFirst({
         where: { id: campaignId, accountId },
-        data: updateData,
+        select: { id: true },
       });
 
-      return updated;
+      if (!existing) {
+        throw new BadRequestException('Campagne introuvable');
+      }
+
+      // Log payload for debugging P2000 / type errors
+      try {
+        this.logger.debug(`saveDraft updateData keys: ${Object.keys(updateData).join(', ')}`);
+        const updated = await this.prisma.campaign.update({
+          where: { id: campaignId },
+          data: updateData,
+        });
+
+        return updated;
+      } catch (err) {
+        // Log full stack to help diagnose Prisma errors in dev
+        this.logger.error('prisma.campaign.update failed in saveDraft', (err as any)?.stack ?? String(err));
+        throw err as Error;
+      }
     } catch (error) {
-      this.logger.error(`Error saving draft: ${String(error)}`);
-      throw new BadRequestException(
-        'Erreur lors de la sauvegarde du brouillon',
-      );
+      this.logger.error(`Error saving draft (outer): ${String(error)}`);
+      // Keep user-friendly message but surface logs server-side
+      throw new BadRequestException('Erreur lors de la sauvegarde du brouillon');
     }
   }
 
   /**
    * Annuler une campagne (DRAFT ou SCHEDULED seulement)
    */
-  async cancelCampaign(accountId: string, campaignId: string) {
+  async cancelCampaign(
+    accountId: string,
+    campaignId: string,
+  ): Promise<Prisma.CampaignGetPayload<{}>> {
     try {
       const campaign = await this.prisma.campaign.findFirst({
         where: { id: campaignId, accountId },

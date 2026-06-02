@@ -12,8 +12,14 @@ describe('AppController', () => {
       controllers: [AppController],
       providers: [
         AppService,
-        { provide: EmailProviderFactory, useValue: { getHealthStatus: () => ({}) } },
-        { provide: SmsProviderFactory, useValue: { getHealthStatus: () => ({}) } },
+        {
+          provide: EmailProviderFactory,
+          useValue: { getHealthStatus: () => ({}) },
+        },
+        {
+          provide: SmsProviderFactory,
+          useValue: { getHealthStatus: () => ({}) },
+        },
       ],
     }).compile();
 

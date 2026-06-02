@@ -58,8 +58,11 @@ export class CampaignsController {
   @Post()
   async create(@Body() body: unknown, @Request() req: TenantRequest) {
     const segmentId = (body as { segmentId?: string } | null)?.segmentId;
+    // Prefer the injected tenant accountId, but fall back to token's user if present
+    const tokenAccountId = (req as any)?.user?.accountId || (req as any)?.user?.sub;
     const accountId =
       req.accountId ??
+      tokenAccountId ??
       (segmentId
         ? await this.campaignsService.findAccountIdBySegmentId(segmentId)
         : await this.campaignsService.findFirstAccountId());
@@ -110,7 +113,14 @@ export class CampaignsController {
     const accountId = req.accountId;
     if (!accountId) throw new Error('accountId manquant');
     const result = await this.campaignsService.update(accountId, id, body);
-    console.log('[DEBUG] controller.update body param:', (body as any)?.segmentId, 'req.body:', (req as any).body, 'result.segmentId:', (result as any)?.segmentId);
+    console.log(
+      '[DEBUG] controller.update body param:',
+      (body as any)?.segmentId,
+      'req.body:',
+      (req as any).body,
+      'result.segmentId:',
+      (result as any)?.segmentId,
+    );
     // Some clients/tests expect a scalar `segmentId` even when the DB
     // returned null; if the caller requested a segment connect, mirror it.
     try {
@@ -219,7 +229,10 @@ export class CampaignsController {
     @Query('expires') expires?: string,
   ) {
     const expiresSeconds = expires ? Number(expires) : 3600;
-    const url = await this.fileUploadService.getPresignedGetUrl(fileName, expiresSeconds);
+    const url = await this.fileUploadService.getPresignedGetUrl(
+      fileName,
+      expiresSeconds,
+    );
     if (!url) {
       throw new HttpException('Presigned URL not available', 400);
     }
@@ -271,7 +284,9 @@ export class CampaignsController {
   ) {
     const campaign = await this.campaignsService.findById(id);
     if (!campaign) {
-      return res.status(404).json({ success: false, error: 'Campagne non trouvée' });
+      return res
+        .status(404)
+        .json({ success: false, error: 'Campagne non trouvée' });
     }
 
     const accountId = req.accountId ?? campaign.accountId;
@@ -290,14 +305,17 @@ export class CampaignsController {
         scheduledAt: scheduledAt || undefined,
       });
       // Ensure response includes a `status` for older callers expecting it
-      if (immediateOrScheduled === 'immediate' && !(result as any).status) {
-        (result as any).status = 'SENDING';
+      if (immediateOrScheduled === 'immediate' && !result.status) {
+        result.status = 'SENDING';
       }
 
       // For some clients (Sprint3 tests) we return 201 when the caller explicitly
       // requested `immediate` in the body. For older callers that use
       // `sendImmediately: true` we keep returning 200.
-      if (immediateOrScheduled === 'immediate' && body?.immediateOrScheduled === 'immediate') {
+      if (
+        immediateOrScheduled === 'immediate' &&
+        body?.immediateOrScheduled === 'immediate'
+      ) {
         return res.status(201).json(result);
       }
 

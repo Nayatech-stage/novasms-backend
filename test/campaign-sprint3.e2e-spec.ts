@@ -120,7 +120,9 @@ describe('Sprint 3 Campaign API (e2e)', () => {
 
     expect(Array.isArray(listCampaigns.body.data)).toBe(true);
     expect(
-      listCampaigns.body.data.some((campaign: { id: string }) => campaign.id === campaignId),
+      listCampaigns.body.data.some(
+        (campaign: { id: string }) => campaign.id === campaignId,
+      ),
     ).toBe(true);
 
     await request(app.getHttpServer())

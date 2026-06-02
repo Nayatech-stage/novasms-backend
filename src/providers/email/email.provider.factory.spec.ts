@@ -36,17 +36,25 @@ describe('EmailProviderFactory', () => {
     const factory = new EmailProviderFactory();
 
     const primary = {
-      send: jest.fn().mockResolvedValue({ success: false, error: 'primary failed' }),
+      send: jest
+        .fn()
+        .mockResolvedValue({ success: false, error: 'primary failed' }),
       sendBatch: jest.fn(),
     };
 
     const secondary = {
-      send: jest.fn().mockResolvedValue({ success: true, messageId: 'brevo-1' }),
+      send: jest
+        .fn()
+        .mockResolvedValue({ success: true, messageId: 'brevo-1' }),
       sendBatch: jest.fn(),
     };
 
     const provider = factory.getProvider({ resend: primary, brevo: secondary });
-    const result = await provider.send('test@example.com', 'Sujet', '<b>Hi</b>');
+    const result = await provider.send(
+      'test@example.com',
+      'Sujet',
+      '<b>Hi</b>',
+    );
 
     expect(primary.send).toHaveBeenCalledTimes(1);
     expect(secondary.send).toHaveBeenCalledTimes(1);
@@ -63,12 +71,18 @@ describe('EmailProviderFactory', () => {
     };
 
     const secondary = {
-      send: jest.fn().mockResolvedValue({ success: true, messageId: 'brevo-2' }),
+      send: jest
+        .fn()
+        .mockResolvedValue({ success: true, messageId: 'brevo-2' }),
       sendBatch: jest.fn(),
     };
 
     const provider = factory.getProvider({ resend: primary, brevo: secondary });
-    const result = await provider.send('test@example.com', 'Sujet', '<b>Hi</b>');
+    const result = await provider.send(
+      'test@example.com',
+      'Sujet',
+      '<b>Hi</b>',
+    );
 
     expect(primary.send).toHaveBeenCalledTimes(1);
     expect(secondary.send).toHaveBeenCalledTimes(1);

@@ -28,7 +28,11 @@ export class ResendProvider implements EmailProvider {
     this.testRecipient = process.env.RESEND_TEST_RECIPIENT;
   }
 
-  async send(to: string, subject: string, html: string): Promise<EmailSendResult> {
+  async send(
+    to: string,
+    subject: string,
+    html: string,
+  ): Promise<EmailSendResult> {
     try {
       const toRecipient = this.testRecipient || to;
       const result = await this.resend.emails.send({
@@ -39,15 +43,20 @@ export class ResendProvider implements EmailProvider {
       });
 
       if (result.error) {
-        return { success: false, error: result.error.message || 'Resend send failed' };
+        return {
+          success: false,
+          error: result.error.message || 'Resend send failed',
+        };
       }
 
       return {
         success: true,
-        messageId: typeof result.data?.id === 'string' ? result.data.id : undefined,
+        messageId:
+          typeof result.data?.id === 'string' ? result.data.id : undefined,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Resend send failed';
+      const message =
+        error instanceof Error ? error.message : 'Resend send failed';
       this.logger.error(`Resend send error: ${message}`);
       return { success: false, error: message };
     }

@@ -36,7 +36,9 @@ describe('SmsProviderFactory', () => {
     const factory = new SmsProviderFactory();
 
     const primary = {
-      send: jest.fn().mockResolvedValue({ success: false, error: 'primary failed' }),
+      send: jest
+        .fn()
+        .mockResolvedValue({ success: false, error: 'primary failed' }),
       sendBatch: jest.fn(),
     };
 
@@ -45,7 +47,10 @@ describe('SmsProviderFactory', () => {
       sendBatch: jest.fn(),
     };
 
-    const provider = factory.getProvider({ twilio: primary, africastalking: secondary });
+    const provider = factory.getProvider({
+      twilio: primary,
+      africastalking: secondary,
+    });
     const result = await provider.send('+22501020304', 'Bonjour');
 
     expect(primary.send).toHaveBeenCalledTimes(1);
@@ -67,7 +72,10 @@ describe('SmsProviderFactory', () => {
       sendBatch: jest.fn(),
     };
 
-    const provider = factory.getProvider({ twilio: primary, africastalking: secondary });
+    const provider = factory.getProvider({
+      twilio: primary,
+      africastalking: secondary,
+    });
     const result = await provider.send('+22501020304', 'Bonjour');
 
     expect(primary.send).toHaveBeenCalledTimes(1);

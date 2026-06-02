@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import type { Campaign, Account, Contact } from '@prisma/client';
@@ -30,6 +31,7 @@ export class WebhookService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -186,6 +188,12 @@ export class WebhookService {
     this.logger.log(
       `Email ouvert: ${contact.email} (campagne: ${campaign.id})`,
     );
+
+    this.eventEmitter.emit('campaign.opened', {
+      accountId: campaign.accountId,
+      campaignId: campaign.id,
+      contactId: contact.id,
+    });
   }
 
   /**
@@ -229,6 +237,12 @@ export class WebhookService {
     this.logger.log(
       `Email cliqué: ${contact.email} (campagne: ${campaign.id})`,
     );
+
+    this.eventEmitter.emit('campaign.clicked', {
+      accountId: campaign.accountId,
+      campaignId: campaign.id,
+      contactId: contact.id,
+    });
   }
 
   /**
