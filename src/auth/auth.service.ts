@@ -8,6 +8,7 @@ import {
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 import * as bcrypt from 'bcryptjs';
 import { RegisterDto } from './dto/register.dto';
 import { randomUUID } from 'crypto';
@@ -55,16 +56,21 @@ export class AuthService {
     private prisma: PrismaService,
     private mail: MailService,
     private jwtService: JwtService,
+    private smsProviderFactory: SmsProviderFactory,
   ) {}
 
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   async register(data: RegisterDto | any) {
     // Normalize incoming payloads: support both French DTO and older API shape
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const email = (data && (data.email ?? data.adminEmail)) || null;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const password = (data && (data.motDePasse ?? data.password)) || null;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const nom =
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       (data && (data.nom ?? data.companyName)) || 'Nouvelle entreprise';
-    const nomBoutique =
-      (data && (data.nomBoutique ?? `${nom} shop`)) || `${nom} shop`;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const pays = (data && (data.pays ?? data.country)) || 'CI';
 
     if (!email || !password) {
@@ -117,6 +123,20 @@ export class AuthService {
         twoFactorEnabled: false,
       },
     });
+
+    // US-001: audit log pour traçabilité inscription
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          accountId: createdAccount.id,
+          userId: createdAccount.id,
+          action: 'registration_complete',
+          details: { email, companyName: nom },
+        },
+      });
+    } catch {
+      // non-bloquant : l'inscription réussit même si l'audit log échoue
+    }
 
     // send verification email (best-effort)
     try {
@@ -384,7 +404,6 @@ export class AuthService {
 
     const authAccount = account as unknown as AuthAccount;
     const primaryUser = await this.getPrimaryUser(authAccount);
-    const now = new Date();
 
     if (!primaryUser.twoFactorEnabled) {
       throw new UnauthorizedException(
@@ -400,6 +419,7 @@ export class AuthService {
 
     let isTotpValid = false;
     if (authAccount.twoFactorSecret) {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       isTotpValid = speakeasy.totp.verify({
         secret: authAccount.twoFactorSecret,
         encoding: 'base32',
@@ -832,11 +852,35 @@ export class AuthService {
       data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
     });
 
-    console.log(
-      `[Auth] 2FA SMS code for ${account.adminEmail}: ${code} (phone: ${_phone || 'n/a'})`,
-    );
+    const phone = _phone || null;
+    if (phone) {
+      try {
+        const smsProvider = this.smsProviderFactory.getProvider();
+        const result = await smsProvider.send(
+          phone,
+          `Votre code NovaSMS : ${code}. Valable 10 min.`,
+        );
+        if (!result.success) {
+          throw new Error(result.error || 'SMS provider error');
+        }
+      } catch (err) {
+        // Fail-safe : on logue l'erreur mais on ne bloque pas (évite lock-out)
+        console.error(
+          '[Auth] 2FA SMS send failed:',
+          err instanceof Error ? err.message : err,
+        );
+        console.log(
+          `[Auth] 2FA fallback — code for ${account.adminEmail}: ${code}`,
+        );
+      }
+    } else {
+      // Aucun numéro connu — mode développement
+      console.log(
+        `[Auth] 2FA dev mode — code for ${account.adminEmail}: ${code}`,
+      );
+    }
 
-    return { success: true, message: 'Code 2FA envoyé (placeholder)' };
+    return { success: true, message: 'Code 2FA envoyé' };
   }
 
   async getAccount(accountId: string) {

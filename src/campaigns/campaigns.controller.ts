@@ -18,6 +18,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { CampaignsService } from './campaigns.service';
 import { FileUploadService } from './file-upload.service';
 import type { Request as ExpressRequest } from 'express';
@@ -27,12 +28,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UseGuards } from '@nestjs/common';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { RolesGuard, RequireRoles } from '../common';
 
 type TenantRequest = ExpressRequest & { accountId?: string };
 
 @ApiTags('Campaigns')
 @Controller('campaigns')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class CampaignsController {
   constructor(
@@ -47,7 +49,7 @@ export class CampaignsController {
    * Ne declenche aucun envoi, expose uniquement l'etat de configuration.
    */
   @Get('providers/health')
-  async providersHealth() {
+  providersHealth() {
     return {
       success: true,
       email: this.emailProviderFactory.getHealthStatus(),
@@ -55,11 +57,13 @@ export class CampaignsController {
     };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post()
   async create(@Body() body: unknown, @Request() req: TenantRequest) {
     const segmentId = (body as { segmentId?: string } | null)?.segmentId;
     // Prefer the injected tenant accountId, but fall back to token's user if present
-    const tokenAccountId = (req as any)?.user?.accountId || (req as any)?.user?.sub;
+    const tokenAccountId =
+      (req as any)?.user?.accountId || (req as any)?.user?.sub;
     const accountId =
       req.accountId ??
       tokenAccountId ??
@@ -90,6 +94,7 @@ export class CampaignsController {
     });
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post(':id/duplicate')
   async duplicate(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
@@ -104,6 +109,7 @@ export class CampaignsController {
     return this.campaignsService.get(accountId, id);
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -135,6 +141,24 @@ export class CampaignsController {
     return result;
   }
 
+  @Post(':id/validate-schedule')
+  async validateSchedule(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      immediateOrScheduled?: 'immediate' | 'scheduled';
+      scheduledAt?: string;
+      timezone?: string;
+    },
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new Error('accountId manquant');
+
+    return this.campaignsService.validateSchedule(accountId, id, body);
+  }
+
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Delete(':id')
   async delete(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
@@ -270,6 +294,7 @@ export class CampaignsController {
     return { success: true };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post(':id/send')
   @HttpCode(HttpStatus.OK)
   async sendCampaign(

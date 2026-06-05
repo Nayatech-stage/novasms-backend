@@ -15,12 +15,14 @@ describe('AutomationsService (unit)', () => {
     const emailFactoryMock: any = { getProvider: () => ({}) };
     const smsFactoryMock: any = { getProvider: () => ({}) };
     const whatsappFactoryMock: any = { getProvider: () => ({}) };
+    const contactsServiceMock: any = {};
 
     const queueMock: any = { add: jest.fn().mockResolvedValue(true) };
 
     // @ts-ignore
     const svc = new AutomationsService(
       prismaMock,
+      contactsServiceMock,
       emailFactoryMock,
       smsFactoryMock,
       whatsappFactoryMock,
@@ -102,6 +104,7 @@ describe('AutomationsService', () => {
     smsSend.mockResolvedValue({ success: true });
     service = new AutomationsService(
       prisma,
+      {} /* contactsService mock */,
       emailProviderFactory,
       smsProviderFactory,
       // pass whatsapp factory and queue to match constructor

@@ -76,10 +76,17 @@ export class ContactsService {
       if (!c.field || !c.operator || c.value === undefined) continue;
       let cond: any = {};
 
-      // ✅ CORRECTION PRINCIPALE : tags est Json? → utiliser array_contains
+      // tags est Json? → les opérateurs varient selon le type de recherche
       if (c.field === 'tag') {
-        // Pour Json: array_contains attend un tableau
-        cond = { tags: { array_contains: [String(c.value)] } };
+        if (c.operator === 'contains') {
+          // Recherche substring dans le tableau : Prisma sérialise le JSON en texte
+          // → string_contains cherche la sous-chaîne dans la représentation texte du tableau
+          // ex: ["CLIENT","NEWSLETTER"] contient "CLIE" → match
+          cond = { tags: { string_contains: String(c.value) } };
+        } else {
+          // Match exact d'un élément (equals / in)
+          cond = { tags: { array_contains: [String(c.value)] } };
+        }
       } else if (c.field === 'status') {
         const v = String(c.value).toLowerCase();
         if (v === 'inactive') cond = { optOut: true };

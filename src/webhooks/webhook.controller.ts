@@ -19,6 +19,121 @@ export class WebhookController {
 
   constructor(private webhookService: WebhookService) {}
 
+  private getRawBody(req: Request, payload: unknown): string {
+    const raw = req['rawBody'];
+    if (Buffer.isBuffer(raw)) {
+      return raw.toString();
+    }
+    return JSON.stringify(payload ?? {});
+  }
+
+  private getHeaderValue(
+    headers: Record<string, string | string[]>,
+    keys: string[],
+  ): string | undefined {
+    for (const key of keys) {
+      const value = headers[key];
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value.trim();
+      }
+      if (Array.isArray(value) && value.length > 0) {
+        const first = value.find(
+          (item) => typeof item === 'string' && item.trim().length > 0,
+        );
+        if (first) return first.trim();
+      }
+    }
+    return undefined;
+  }
+
+  private verifyHmacSha256Hex(
+    body: string,
+    secret: string,
+    signature: string,
+  ): boolean {
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(body)
+      .digest('hex');
+
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+    const signatureBuffer = Buffer.from(signature, 'utf8');
+    if (expectedBuffer.length !== signatureBuffer.length) {
+      return false;
+    }
+    return crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
+  }
+
+  private assertGenericProviderSignature(
+    provider: string,
+    secret: string | undefined,
+    headers: Record<string, string | string[]>,
+    req: Request,
+    payload: unknown,
+    headerKeys: string[],
+  ) {
+    if (!secret?.trim()) return;
+
+    const signature = this.getHeaderValue(headers, headerKeys);
+    if (!signature) {
+      this.logger.warn(`${provider} webhook rejected: missing signature`);
+      throw new BadRequestException('Missing webhook signature');
+    }
+
+    const rawBody = this.getRawBody(req, payload);
+    const isValid = this.verifyHmacSha256Hex(rawBody, secret, signature);
+    if (!isValid) {
+      this.logger.warn(`${provider} webhook rejected: invalid signature`);
+      throw new BadRequestException('Invalid webhook signature');
+    }
+  }
+
+  private assertStripeSignature(
+    secret: string | undefined,
+    headers: Record<string, string | string[]>,
+    req: Request,
+    payload: unknown,
+  ) {
+    if (!secret?.trim()) return;
+
+    const stripeSignature = this.getHeaderValue(headers, ['stripe-signature']);
+    if (!stripeSignature) {
+      this.logger.warn('Stripe webhook rejected: missing stripe-signature');
+      throw new BadRequestException('Missing webhook signature');
+    }
+
+    const rawBody = this.getRawBody(req, payload);
+    const segments = stripeSignature.split(',').map((part) => part.trim());
+    const timestamp = segments.find((part) => part.startsWith('t='))?.slice(2);
+    const signatures = segments
+      .filter((part) => part.startsWith('v1='))
+      .map((part) => part.slice(3));
+
+    if (!timestamp || signatures.length === 0) {
+      throw new BadRequestException('Invalid webhook signature header');
+    }
+
+    const signedPayload = `${timestamp}.${rawBody}`;
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(signedPayload)
+      .digest('hex');
+
+    const hasMatch = signatures.some((candidate) => {
+      const expectedBuffer = Buffer.from(expected, 'utf8');
+      const candidateBuffer = Buffer.from(candidate, 'utf8');
+      if (expectedBuffer.length !== candidateBuffer.length) {
+        return false;
+      }
+      return crypto.timingSafeEqual(expectedBuffer, candidateBuffer);
+    });
+
+    if (!hasMatch) {
+      this.logger.warn('Stripe webhook rejected: invalid signature');
+      throw new BadRequestException('Invalid webhook signature');
+    }
+  }
+
   /**
    * Endpoint pour recevoir les événements email
    * POST /webhooks/email-events
@@ -52,40 +167,14 @@ export class WebhookController {
     this.logger.log(`Webhook reçu: ${payload.event}`);
 
     // Optional HMAC verification if a secret is configured
-    const secret = process.env.RESEND_WEBHOOK_SECRET;
-    if (secret) {
-      try {
-        const sigHeader = (headers['x-resend-signature'] ||
-          headers['resend-signature'] ||
-          headers['x-signature'] ||
-          headers['signature']) as string | undefined;
-        if (sigHeader) {
-          const payloadString = req['rawBody']
-            ? req['rawBody'].toString()
-            : JSON.stringify(payload);
-          const expected = crypto
-            .createHmac('sha256', secret)
-            .update(payloadString)
-            .digest('hex');
-          if (
-            !crypto.timingSafeEqual(
-              Buffer.from(expected),
-              Buffer.from(sigHeader),
-            )
-          ) {
-            this.logger.warn('Webhook signature mismatch');
-            throw new BadRequestException('Invalid webhook signature');
-          }
-        } else {
-          this.logger.warn(
-            'RESEND_WEBHOOK_SECRET set but no signature header provided',
-          );
-        }
-      } catch (err) {
-        this.logger.error('Webhook signature verification failed');
-        throw err;
-      }
-    }
+    this.assertGenericProviderSignature(
+      'email-events',
+      process.env.RESEND_WEBHOOK_SECRET,
+      headers,
+      req,
+      payload,
+      ['x-resend-signature', 'resend-signature', 'x-signature', 'signature'],
+    );
 
     try {
       const result = await this.webhookService.receiveWebhook(payload);
@@ -115,5 +204,90 @@ export class WebhookController {
       timestamp: new Date(),
       webhooksEnabled: true,
     };
+  }
+
+  @Post('resend')
+  async receiveResendWebhook(
+    @Headers() headers: Record<string, string | string[]>,
+    @Body() payload: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    this.assertGenericProviderSignature(
+      'resend',
+      process.env.RESEND_WEBHOOK_SECRET,
+      headers,
+      req,
+      payload,
+      ['x-resend-signature', 'resend-signature', 'x-signature', 'signature'],
+    );
+
+    const result = await this.webhookService.receiveResendWebhook(payload);
+    return { success: true, ...result };
+  }
+
+  @Post('africastalking')
+  async receiveAfricasTalkingWebhook(
+    @Headers() headers: Record<string, string | string[]>,
+    @Body() payload: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    this.assertGenericProviderSignature(
+      'africastalking',
+      process.env.AFRICASTALKING_WEBHOOK_SECRET,
+      headers,
+      req,
+      payload,
+      [
+        'x-africastalking-signature',
+        'africastalking-signature',
+        'x-signature',
+        'signature',
+      ],
+    );
+
+    const result = await this.webhookService.receiveSmsWebhook(
+      'africastalking',
+      payload,
+    );
+    return { success: true, ...result };
+  }
+
+  @Post('twilio')
+  async receiveTwilioWebhook(
+    @Headers() headers: Record<string, string | string[]>,
+    @Body() payload: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    this.assertGenericProviderSignature(
+      'twilio',
+      process.env.TWILIO_WEBHOOK_SECRET,
+      headers,
+      req,
+      payload,
+      ['x-twilio-signature', 'twilio-signature', 'x-signature', 'signature'],
+    );
+
+    const result = await this.webhookService.receiveSmsWebhook(
+      'twilio',
+      payload,
+    );
+    return { success: true, ...result };
+  }
+
+  @Post('stripe')
+  async receiveStripeWebhook(
+    @Headers() headers: Record<string, string | string[]>,
+    @Body() payload: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    this.assertStripeSignature(
+      process.env.STRIPE_WEBHOOK_SECRET,
+      headers,
+      req,
+      payload,
+    );
+
+    const result = await this.webhookService.receiveStripeWebhook(payload);
+    return { success: true, ...result };
   }
 }

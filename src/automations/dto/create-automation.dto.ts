@@ -22,6 +22,8 @@ export class CreateAutomationDto {
     'campaign_opened',
     'link_clicked',
     'date_based',
+    'inactivity_window',
+    'recurring_schedule',
   ])
   trigger!:
     | 'contact_added'
@@ -30,7 +32,9 @@ export class CreateAutomationDto {
     | 'tag_added'
     | 'campaign_opened'
     | 'link_clicked'
-    | 'date_based';
+    | 'date_based'
+    | 'inactivity_window'
+    | 'recurring_schedule';
 
   @IsOptional()
   @IsObject()

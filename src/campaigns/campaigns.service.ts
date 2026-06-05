@@ -4,7 +4,6 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
-  ConflictException,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -12,7 +11,6 @@ import {
   Campaign,
   CampaignStatus,
   SendVariant,
-  AutomationStatus,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -64,6 +62,27 @@ function normalizeSmsPhoneNumber(phone: string): string | null {
   return null;
 }
 
+function normalizeTimeZone(timezone?: string | null): string {
+  const fallback = 'Africa/Abidjan';
+  if (!timezone || timezone.trim().length === 0) return fallback;
+
+  try {
+    new Intl.DateTimeFormat('fr-FR', { timeZone: timezone.trim() });
+    return timezone.trim();
+  } catch {
+    return fallback;
+  }
+}
+
+function validateScheduledAtValue(scheduledAt?: unknown): Date | null {
+  const parsed = asOptionalDate(scheduledAt);
+  if (!parsed) return null;
+  if (parsed.getTime() <= Date.now()) {
+    throw new BadRequestException('scheduledAt cannot be in the past');
+  }
+  return parsed;
+}
+
 function extractRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     return undefined;
@@ -101,7 +120,7 @@ export class CampaignsService {
     const emailContent = extractRecord(body.emailContent);
     const smsContent = extractRecord(body.smsContent);
 
-    const scheduledAt = asOptionalDate(body.scheduledAt);
+    const scheduledAt = validateScheduledAtValue(body.scheduledAt);
     const normalizedStatus = rawStatus.toUpperCase();
     const finalStatus = scheduledAt
       ? CampaignStatus.SCHEDULED
@@ -160,7 +179,7 @@ export class CampaignsService {
         typeof body.abTestDuration === 'number' ? body.abTestDuration : 4,
       segmentId: asOptionalString(body.segmentId),
       scheduledAt,
-      timezone: asOptionalString(body.timezone) ?? 'Africa/Abidjan',
+      timezone: normalizeTimeZone(asOptionalString(body.timezone)),
       estimatedCost: asOptionalDecimal(body.estimatedCost),
       bestSendTime: bestSendTimeValue,
       // EN-1688: Personalization variables
@@ -170,7 +189,7 @@ export class CampaignsService {
     // Debugging: log payload sizes to troubleshoot Prisma P2000 column-too-long errors
     const fieldLengths: Record<string, number | null> = {};
     for (const key of Object.keys(payload)) {
-      const v: unknown = (payload as any)[key];
+      const v: unknown = (payload as Record<string, unknown>)[key];
       if (typeof v === 'string') fieldLengths[key] = v.length;
       else if (v === null || v === undefined) fieldLengths[key] = null;
       else {
@@ -225,11 +244,16 @@ export class CampaignsService {
       typeof contentJson === 'object'
     ) {
       try {
-        const cj = contentJson as any;
+        const cj = contentJson as { blocks?: unknown[] };
         if (cj.blocks && Array.isArray(cj.blocks)) {
           for (const b of cj.blocks) {
-            if (b && b.type === 'button' && b.content && b.content.url) {
-              const url = String(b.content.url || '').trim();
+            const block = asRecord(b);
+            const content = asRecord(block?.content);
+            if (
+              block?.['type'] === 'button' &&
+              typeof content?.['url'] === 'string'
+            ) {
+              const url = content['url'].trim();
               // Simple URL validation
               try {
                 const parsed = new URL(url);
@@ -1106,7 +1130,9 @@ export class CampaignsService {
         const bodyPreview = JSON.stringify(body).slice(0, 2000);
         this.logger.debug('[DEBUG] saveDraft received body: ' + bodyPreview);
       } catch (err) {
-        this.logger.debug('[DEBUG] saveDraft received body (could not stringify)');
+        this.logger.debug(
+          '[DEBUG] saveDraft received body (could not stringify)',
+        );
       }
 
       const updateData: Prisma.CampaignUpdateInput = {
@@ -1149,9 +1175,11 @@ export class CampaignsService {
         updateData.abSplitPct =
           typeof body.abSplitPct === 'number' ? body.abSplitPct : 50;
       if (body.timezone !== undefined)
-        updateData.timezone = asOptionalString(body.timezone);
+        updateData.timezone = normalizeTimeZone(
+          asOptionalString(body.timezone),
+        );
       if (body.scheduledAt !== undefined) {
-        const scheduled = asOptionalDate(body.scheduledAt);
+        const scheduled = validateScheduledAtValue(body.scheduledAt);
         if (!scheduled) throw new BadRequestException('scheduledAt invalide');
         updateData.scheduledAt = scheduled;
         updateData.status = CampaignStatus.SCHEDULED;
@@ -1177,7 +1205,9 @@ export class CampaignsService {
 
       // Log payload for debugging P2000 / type errors
       try {
-        this.logger.debug(`saveDraft updateData keys: ${Object.keys(updateData).join(', ')}`);
+        this.logger.debug(
+          `saveDraft updateData keys: ${Object.keys(updateData).join(', ')}`,
+        );
         const updated = await this.prisma.campaign.update({
           where: { id: campaignId },
           data: updateData,
@@ -1186,13 +1216,18 @@ export class CampaignsService {
         return updated;
       } catch (err) {
         // Log full stack to help diagnose Prisma errors in dev
-        this.logger.error('prisma.campaign.update failed in saveDraft', (err as any)?.stack ?? String(err));
+        this.logger.error(
+          'prisma.campaign.update failed in saveDraft',
+          (err as any)?.stack ?? String(err),
+        );
         throw err as Error;
       }
     } catch (error) {
       this.logger.error(`Error saving draft (outer): ${String(error)}`);
       // Keep user-friendly message but surface logs server-side
-      throw new BadRequestException('Erreur lors de la sauvegarde du brouillon');
+      throw new BadRequestException(
+        'Erreur lors de la sauvegarde du brouillon',
+      );
     }
   }
 
@@ -1242,5 +1277,51 @@ export class CampaignsService {
       this.logger.error(`Error cancelling campaign: ${String(error)}`);
       throw error;
     }
+  }
+
+  async validateSchedule(accountId: string, campaignId: string, data: unknown) {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: campaignId, accountId },
+      select: { id: true, name: true, channelType: true, segmentId: true },
+    });
+
+    if (!campaign) {
+      throw new NotFoundException('Campagne non trouvée');
+    }
+
+    const body = asRecord(data);
+    if (!body) {
+      throw new BadRequestException('Données invalides');
+    }
+
+    const immediateOrScheduled =
+      asOptionalString(body.immediateOrScheduled) === 'scheduled'
+        ? 'scheduled'
+        : 'immediate';
+    const timezone = normalizeTimeZone(asOptionalString(body.timezone));
+    const scheduledAt =
+      immediateOrScheduled === 'scheduled'
+        ? validateScheduledAtValue(body.scheduledAt)
+        : null;
+
+    const warnings: string[] = [];
+    if (campaign.channelType === 'SMS') {
+      warnings.push(
+        'Vérifiez que les numéros de téléphone sont normalisés avant l’envoi.',
+      );
+    }
+
+    return {
+      success: true,
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      channelType: campaign.channelType,
+      segmentId: campaign.segmentId,
+      timezone,
+      immediateOrScheduled,
+      scheduledAt: scheduledAt?.toISOString() ?? null,
+      isValid: true,
+      warnings,
+    };
   }
 }

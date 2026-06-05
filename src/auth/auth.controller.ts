@@ -8,10 +8,13 @@ import {
   Param,
   UseGuards,
   BadRequestException,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { ApiOperation, ApiTags, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { JwtBlacklistService } from './jwt-blacklist.service';
 import type { RegisterDto } from './dto/register.dto';
 import { Tenant } from '../common/decorators/tenant.decorator';
 import { ForgotPasswordSchema } from './dto/forgot-password.dto';
@@ -20,7 +23,10 @@ import { ResetPasswordSchema } from './dto/reset-password.dto';
 @ApiTags('Authentification')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly blacklist: JwtBlacklistService,
+  ) {}
 
   @Post('register')
   @ApiOperation({ summary: 'Inscription nouveau compte marchand' })
@@ -114,6 +120,25 @@ export class AuthController {
   @ApiOperation({ summary: "Rafraîchir les tokens d'authentification" })
   async refresh(@Body() body: { refreshToken: string }) {
     return this.authService.refreshTokens(body.refreshToken);
+  }
+
+  /**
+   * US-015 – Logout: immediately revoke the current access token via Redis.
+   * The token remains in Redis until its natural expiry time.
+   */
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Déconnexion — révocation immédiate du token JWT' })
+  async logout(
+    @Req()
+    req: Request & { user?: { accountId: string; iat?: number; exp?: number } },
+  ) {
+    const user = req.user;
+    if (user?.accountId && user.iat !== undefined && user.exp !== undefined) {
+      await this.blacklist.revoke(user.accountId, user.iat, user.exp);
+    }
+    return { success: true, message: 'Déconnecté avec succès' };
   }
 
   @Post('generate-2fa-secret')

@@ -15,7 +15,14 @@ import { ContactsModule } from './contacts/contacts.module';
 import { CampaignsModule } from './campaigns/campaigns.module';
 import { AutomationsModule } from './automations/automations.module';
 import { WebhookModule } from './webhooks/webhook.module';
+import { TemplatesModule } from './templates/templates.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { MobileMoneyModule } from './mobile-money/mobile-money.module';
+import { TransactionsModule } from './transactions/transactions.module';
+import { AccountModule } from './account/account.module';
+import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { SegmentsModule } from './segments/segments.module';
+import { TrackModule } from './track/track.module';
 import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 import { WhatsappProviderFactory } from './providers/whatsapp/whatsapp.provider.factory';
@@ -44,7 +51,14 @@ const isTestEnvironment =
     ContactsModule,
     CampaignsModule,
     AutomationsModule,
+    TemplatesModule,
     AnalyticsModule,
+    MobileMoneyModule,
+    TransactionsModule,
+    AccountModule,
+    AuditLogsModule,
+    SegmentsModule,
+    TrackModule,
     WebhookModule,
   ],
   controllers: [AppController, SegmentsController],

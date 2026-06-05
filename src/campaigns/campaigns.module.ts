@@ -10,6 +10,7 @@ import { CampaignScheduleProcessor } from '../queues/campaign.schedule.queue';
 import { CampaignScheduleWorker } from '../queues/campaign.schedule.worker';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { WhatsappProviderFactory } from '../providers/whatsapp/whatsapp.provider.factory';
 import { ContactsModule } from '../contacts/contacts.module';
 
 @Module({
@@ -31,6 +32,7 @@ import { ContactsModule } from '../contacts/contacts.module';
     CampaignScheduleWorker,
     EmailProviderFactory,
     SmsProviderFactory,
+    WhatsappProviderFactory,
   ],
   exports: [CampaignsService],
 })

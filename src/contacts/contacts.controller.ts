@@ -21,6 +21,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import {
   ContactsService,
   SegmentCriterion,
@@ -34,6 +35,7 @@ import * as os from 'os';
 
 import { SegmentCreateSchema, SegmentPreviewSchema } from './dto/segment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard, RequireRoles } from '../common';
 import type { Request as ExpressRequest } from 'express';
 
 type TenantRequest = ExpressRequest & { accountId?: string };
@@ -56,7 +58,7 @@ type ContactUpdateBody = {
 
 @ApiTags('Contacts')
 @Controller('contacts')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class ContactsController {
   constructor(
@@ -123,6 +125,7 @@ export class ContactsController {
     };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post('import/start')
   @ApiOperation({ summary: 'Démarrer un import par chunks (retourne fileId)' })
   async startImport(
@@ -142,6 +145,7 @@ export class ContactsController {
     return { success: true, fileId };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post('import/chunk')
   @ApiOperation({ summary: "Envoyer un chunk d'import (rows en JSON array)" })
   async uploadImportChunk(
@@ -167,6 +171,7 @@ export class ContactsController {
     return { success: true };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post('import/complete')
   @ApiOperation({
     summary: "Finaliser l'import: assembler et lancer le traitement",
@@ -257,6 +262,7 @@ export class ContactsController {
     return contact;
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post()
   @ApiOperation({ summary: 'Creer un contact' })
   async create(@Body() body: ContactUpdateBody, @Request() req: TenantRequest) {
@@ -264,7 +270,7 @@ export class ContactsController {
     if (!accountId) throw new BadRequestException('accountId manquant');
     return this.contactsService.create(accountId, body);
   }
-
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Patch(':id')
   @ApiOperation({ summary: 'Mettre a jour un contact' })
   async update(
@@ -289,6 +295,7 @@ export class ContactsController {
     return { success: true };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Delete(':id')
   @ApiOperation({ summary: 'Supprimer un contact' })
   async remove(@Param('id') id: string, @Request() req: TenantRequest) {
@@ -348,6 +355,7 @@ export class ContactsController {
     };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post('segments')
   @ApiOperation({ summary: 'Creer segment' })
   @HttpCode(HttpStatus.CREATED)
@@ -421,6 +429,7 @@ export class ContactsController {
     return { segment };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Patch('segments/:id')
   @ApiOperation({ summary: 'Modifier segment' })
   async updateSegment(
@@ -454,6 +463,7 @@ export class ContactsController {
     };
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Delete('segments/:id')
   @ApiOperation({ summary: 'Supprimer segment' })
   async deleteSegment(@Param('id') id: string, @Request() req: TenantRequest) {

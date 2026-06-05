@@ -107,6 +107,8 @@ model Account {
   twoFactorSecret       String?   @db.VarChar(64)
   backupCodes           String[]  @default([])
   onboardingCompleted   Boolean   @default(false)
+  logoUrl               String?   @db.VarChar(512)
+  avatarUrl             String?   @db.VarChar(512)
 
   users                 User[]
   contacts              Contact[]
@@ -120,6 +122,8 @@ model Account {
   invitations           Invitation[]
   importReports         ImportReport[]
   jobs                  Job[]
+  providerConfigs       ProviderConfig[]
+  notificationPrefs     NotificationPrefs?
 
   @@map("accounts")
 }
@@ -130,6 +134,9 @@ model User {
   account         Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
   email           String    @unique @db.VarChar(255)
   passwordHash    String    @db.VarChar(255)
+  firstName       String?   @db.VarChar(100)
+  lastName        String?   @db.VarChar(100)
+  avatarUrl       String?   @db.VarChar(512)
   role            UserRole  @default(Editor)
   twoFactorEnabled Boolean  @default(false)
   lastLogin       DateTime? @db.Timestamp
@@ -385,10 +392,16 @@ model Template {
   id           String   @id @default(uuid())
   accountId    String
   account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  key          String   @unique @db.VarChar(255)
   name         String?  @db.VarChar(255)
   channelType  String?  @db.VarChar(20)
   htmlContent  String?  @db.Text
+  contentText  String?  @db.Text
+  variables    Json?
+  createdBy    String?  @db.VarChar(255)
   isPreset     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
   automations  Automation[]
 
   @@map("templates")
@@ -404,6 +417,7 @@ model AuditLog {
   action      String?   @db.VarChar(255)
   details     Json?
   ipAddress   String?   @db.VarChar(45)
+  userAgent   String?   @db.VarChar(512)
   createdAt   DateTime  @default(now()) @db.Timestamp
 
   @@map("audit_logs")
@@ -508,4 +522,35 @@ model Invoice {
   createdAt     DateTime @default(now()) @db.Timestamp
 
   @@map("invoices")
+}
+
+model ProviderConfig {
+  id          String   @id @default(uuid())
+  accountId   String
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  providerType String  @db.VarChar(50)  // "email" | "sms" | "whatsapp" | "payment" | "storage"
+  providerName String  @db.VarChar(50)  // "resend" | "brevo" | "twilio" | "africastalking" | "stripe"
+  isActive    Boolean  @default(false)
+  config      Json?                      // clés API chiffrées
+  createdAt   DateTime @default(now()) @db.Timestamp
+  updatedAt   DateTime @updatedAt
+
+  @@unique([accountId, providerType, providerName])
+  @@index([accountId, providerType])
+  @@map("provider_configs")
+}
+
+model NotificationPrefs {
+  id                    String   @id @default(uuid())
+  accountId             String   @unique
+  account               Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  emailOnCampaignDone   Boolean  @default(true)
+  emailOnLowCredits     Boolean  @default(true)
+  emailOnTeamInvite     Boolean  @default(true)
+  smsOnCampaignDone     Boolean  @default(false)
+  smsOnLowCredits       Boolean  @default(true)
+  creditAlertThreshold  Decimal? @db.Decimal(12,2)
+  updatedAt             DateTime @updatedAt
+
+  @@map("notification_prefs")
 }

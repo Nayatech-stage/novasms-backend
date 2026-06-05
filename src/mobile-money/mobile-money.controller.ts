@@ -7,7 +7,9 @@ import {
   Param,
   Request,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiTags,
   ApiOperation,
@@ -158,5 +160,33 @@ export class MobileMoneyController {
     );
 
     return { transactions };
+  }
+
+  @Get('transactions/:id/receipt')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Télécharger le reçu PDF d'une transaction Mobile Money",
+  })
+  @ApiParam({ name: 'id', description: 'ID de la transaction' })
+  async downloadReceipt(
+    @Param('id') id: string,
+    @Request() req: TenantRequest,
+    @Res() res: Response,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) {
+      throw new Error('accountId manquant');
+    }
+    const pdfBuffer = await this.mobileMoneyService.generateReceiptPdf(
+      id,
+      String(accountId),
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="receipt-${id}.pdf"`,
+      'Content-Length': pdfBuffer.length,
+    });
+    res.end(pdfBuffer);
   }
 }

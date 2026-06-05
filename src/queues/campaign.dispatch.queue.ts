@@ -6,6 +6,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { WhatsappProviderFactory } from '../providers/whatsapp/whatsapp.provider.factory';
+import {
+  createTrackingToken,
+  getTrackingBaseUrl,
+} from '../track/track-token.util';
 import {
   CampaignStatus,
   CampaignVariant,
@@ -101,6 +106,45 @@ function rewriteCampaignEmailHtmlImageSources(html: string): string {
       return `${prefix}${quote}${escapeHtml(rewriteCampaignImageSource(src))}${quote}`;
     },
   );
+}
+
+function rewriteTrackedAnchors(html: string, sendId: string): string {
+  const token = createTrackingToken(sendId);
+  const trackingBaseUrl = getTrackingBaseUrl();
+
+  return html.replace(
+    /(<a\b[^>]*\bhref=)(["'])([^"']+)(\2)/gi,
+    (_match, prefix: string, quote: string, href: string) => {
+      if (!/^https?:\/\//i.test(href)) {
+        return `${prefix}${quote}${escapeHtml(href)}${quote}`;
+      }
+
+      if (/\/track\/click\?/i.test(href)) {
+        return `${prefix}${quote}${escapeHtml(href)}${quote}`;
+      }
+
+      const trackedHref = `${trackingBaseUrl}/track/click?sendId=${encodeURIComponent(sendId)}&url=${encodeURIComponent(href)}&t=${encodeURIComponent(token)}`;
+      return `${prefix}${quote}${escapeHtml(trackedHref)}${quote}`;
+    },
+  );
+}
+
+function injectOpenTrackingPixel(html: string, sendId: string): string {
+  const token = createTrackingToken(sendId);
+  const trackingBaseUrl = getTrackingBaseUrl();
+  const pixelUrl = `${trackingBaseUrl}/track/open?sendId=${encodeURIComponent(sendId)}&t=${encodeURIComponent(token)}`;
+  const pixelTag = `<img src="${escapeHtml(pixelUrl)}" width="1" height="1" style="display:none;" alt=""/>`;
+
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${pixelTag}</body>`);
+  }
+
+  return `${html}${pixelTag}`;
+}
+
+function applyTrackingToEmailHtml(html: string, sendId: string): string {
+  const rewrittenAnchors = rewriteTrackedAnchors(html, sendId);
+  return injectOpenTrackingPixel(rewrittenAnchors, sendId);
 }
 
 function normalizeSmsPhoneNumber(phone: string): string | null {
@@ -358,6 +402,42 @@ function renderEmailHtml(
   `;
 }
 
+function resolveVariantABConfig(contentJson: unknown, variant?: 'A' | 'B') {
+  if (!variant) return undefined;
+  const body = asRecord(contentJson);
+  const abTestConfig = asRecord(body?.abTestConfig);
+  if (!abTestConfig) return undefined;
+
+  const variantKey = variant === 'B' ? 'variantB' : 'variantA';
+  return asRecord(abTestConfig[variantKey]);
+}
+
+function buildVariantEmailContentJson(
+  contentJson: unknown,
+  variantConfig: Record<string, unknown> | undefined,
+  fallbackSubject: string,
+) {
+  if (!variantConfig) return contentJson;
+  const emailHtml =
+    typeof variantConfig.emailHtml === 'string'
+      ? variantConfig.emailHtml.trim()
+      : '';
+  if (!emailHtml) return contentJson;
+
+  const base = asRecord(contentJson) || {};
+  const subject =
+    typeof variantConfig.emailSubject === 'string' &&
+    variantConfig.emailSubject.trim().length > 0
+      ? variantConfig.emailSubject
+      : fallbackSubject;
+
+  return {
+    ...base,
+    subject,
+    blocks: [{ type: 'html', content: { html: emailHtml } }],
+  };
+}
+
 @Processor('campaign-dispatch')
 export class CampaignDispatchProcessor extends WorkerHost {
   private readonly logger = new Logger(CampaignDispatchProcessor.name);
@@ -368,6 +448,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
     private mailService: MailService,
     private emailProviderFactory: EmailProviderFactory,
     private smsProviderFactory: SmsProviderFactory,
+    private whatsappProviderFactory: WhatsappProviderFactory,
   ) {
     super();
   }
@@ -517,6 +598,22 @@ export class CampaignDispatchProcessor extends WorkerHost {
               : effectiveVariant === 'A'
                 ? campaign.subjectA || campaign.subject || ''
                 : campaign.subject || '';
+          const variantConfig = resolveVariantABConfig(
+            campaign.contentJson,
+            effectiveVariant,
+          );
+          const smsVariantMessage =
+            typeof variantConfig?.smsMessage === 'string'
+              ? variantConfig.smsMessage
+              : undefined;
+          const smsContent = smsVariantMessage
+            ? personalizeText(smsVariantMessage, contactContext)
+            : content;
+          const variantEmailContentJson = buildVariantEmailContentJson(
+            campaign.contentJson,
+            variantConfig,
+            subject,
+          );
           const personalizedSubject = personalizeText(subject, {
             firstName: contact.firstName || undefined,
             lastName: contact.lastName || undefined,
@@ -539,7 +636,17 @@ export class CampaignDispatchProcessor extends WorkerHost {
             if (!normalizedPhone) {
               throw new Error('Contact phone invalid');
             }
-            await this.sendSms(normalizedPhone, content);
+            await this.sendSms(normalizedPhone, smsContent);
+          } else if (campaign.channelType === 'WhatsApp') {
+            // US: Canal WhatsApp end-to-end
+            if (!contact.phone) {
+              throw new Error('Contact phone missing for WhatsApp');
+            }
+            const normalizedPhone = normalizeSmsPhoneNumber(contact.phone);
+            if (!normalizedPhone) {
+              throw new Error('Contact phone invalid for WhatsApp');
+            }
+            await this.sendWhatsApp(normalizedPhone, smsContent);
           } else {
             if (!contact.email) {
               throw new Error('Contact email missing');
@@ -547,9 +654,10 @@ export class CampaignDispatchProcessor extends WorkerHost {
             await this.sendEmail(
               contact.email,
               personalizedSubject,
-              campaign.contentJson,
+              variantEmailContentJson,
               content,
               contactContext,
+              sendRecord.id,
             );
           }
 
@@ -563,6 +671,10 @@ export class CampaignDispatchProcessor extends WorkerHost {
               sentAt: new Date(),
             },
           });
+
+          // US-016 – Atomic credit deduction per successful send
+          await this.deductSendCredit(campaign.accountId, campaign);
+
           return { success: true };
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
@@ -814,18 +926,118 @@ export class CampaignDispatchProcessor extends WorkerHost {
     } as unknown as Job<DispatchCampaignJob>);
   }
 
-  private async sendSms(phone: string, content: string) {
+  /**
+   * US-016 – Deduct one send's credit from the account balance.
+   *
+   * Cost per send:
+   *   1. campaign.estimatedCost / campaign.estimatedRecipients  (when both are set)
+   *   2. env CREDIT_COST_PER_SMS / CREDIT_COST_PER_EMAIL       (fallback)
+   *   3. 0  (if no cost information is available)
+   *
+   * Uses atomic SQL to prevent balance from going below zero:
+   *   UPDATE accounts SET credit_balance = credit_balance - cost
+   *   WHERE id = ? AND credit_balance >= cost
+   *
+   * If the account has insufficient credits the send is recorded but a warning
+   * is logged (fail-open so the campaign is not interrupted mid-flight).
+   */
+  private async deductSendCredit(
+    accountId: string,
+    campaign: {
+      estimatedCost: unknown;
+      estimatedRecipients: number;
+      channelType: string;
+    },
+  ): Promise<void> {
+    let costPerSend = 0;
+
+    const estCost = Number(campaign.estimatedCost ?? 0);
+    const estRecipients = campaign.estimatedRecipients || 0;
+
+    if (estCost > 0 && estRecipients > 0) {
+      costPerSend = estCost / estRecipients;
+    } else {
+      const envKey =
+        campaign.channelType === 'SMS'
+          ? 'CREDIT_COST_PER_SMS'
+          : 'CREDIT_COST_PER_EMAIL';
+      costPerSend = parseFloat(process.env[envKey] || '0');
+    }
+
+    if (costPerSend <= 0) return;
+
+    // Atomic check-and-decrement — prevents negative balance
+    const result = await this.prisma.$executeRaw`
+      UPDATE accounts
+      SET    credit_balance = credit_balance - ${costPerSend}::decimal
+      WHERE  id = ${accountId}::uuid
+      AND    credit_balance >= ${costPerSend}::decimal
+    `;
+
+    if (result === 0) {
+      this.logger.warn(
+        `Account ${accountId} has insufficient credits for send (need ${costPerSend}).`,
+      );
+    }
+  }
+
+  private async sendWhatsApp(phone: string, content: string) {
+    try {
+      const provider = this.whatsappProviderFactory.getProvider();
+      const result = await provider.send(phone, content);
+      if (!result.success) {
+        const isPermanent = /invalid|blacklisted|unsubscribed|opt.?out/i.test(
+          result.error || '',
+        );
+        if (isPermanent) {
+          this.logger.warn(
+            `WhatsApp permanent failure to ${phone}: ${result.error}`,
+          );
+          return;
+        }
+        throw new Error(result.error || 'WhatsApp provider send failed');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isTransient = /rate.limit|timeout|503|429|network|ETIMEDOUT/i.test(
+        msg,
+      );
+      this.logger.error(
+        `WhatsApp send to ${phone} failed (${isTransient ? 'transient' : 'permanent'}): ${msg}`,
+      );
+      if (isTransient) throw err;
+    }
+  }
+
+  private async sendSms(phone: string, content: string, sendId?: string) {
     try {
       const provider = this.smsProviderFactory.getProvider();
       const result = await provider.send(phone, content);
 
       if (!result.success) {
+        const isPermanent =
+          /invalid|blacklisted|unsubscribed|opt.?out|unreachable/i.test(
+            result.error || '',
+          );
+        if (isPermanent) {
+          // erreur permanente — ne pas relancer
+          this.logger.warn(
+            `SMS permanent failure to ${phone}: ${result.error}`,
+          );
+          return; // retourner sans throw pour ne pas retriggerer le job
+        }
         throw new Error(result.error || 'SMS provider send failed');
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`SMS send to ${phone} failed: ${msg}`);
-      throw err;
+      const isTransient = /rate.limit|timeout|503|429|network|ETIMEDOUT/i.test(
+        msg,
+      );
+      this.logger.error(
+        `SMS send to ${phone} failed (${isTransient ? 'transient' : 'permanent'}): ${msg}`,
+      );
+      if (isTransient) throw err; // BullMQ retry
+      // erreur permanente — on logue sans relancer
     }
   }
 
@@ -843,9 +1055,11 @@ export class CampaignDispatchProcessor extends WorkerHost {
       companyName?: string;
       promoCode?: string;
     },
+    sendId: string,
   ) {
     const provider = this.emailProviderFactory.getProvider();
-    const html = renderEmailHtml(contentJson, fallbackText, context);
+    const renderedHtml = renderEmailHtml(contentJson, fallbackText, context);
+    const html = applyTrackingToEmailHtml(renderedHtml, sendId);
     const result = await provider.send(email, subject, html);
 
     if (!result.success) {

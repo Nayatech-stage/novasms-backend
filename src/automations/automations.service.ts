@@ -262,7 +262,7 @@ export class AutomationsService {
       accountId: event.accountId,
       trigger: 'contact_added',
       contactId: contact.id,
-      delaySeconds: 0,
+      // delaySeconds not passed — each automation uses its own delaySeconds
     });
   }
 
@@ -310,6 +310,93 @@ export class AutomationsService {
     });
   }
 
+  // US-011: trigger inactivity_window — vérification quotidienne
+  @Cron(CronExpression.EVERY_DAY_AT_9AM)
+  async processInactivityWindowAutomations() {
+    const automations = await this.prisma.automation.findMany({
+      where: { status: AutomationStatus.Active, trigger: 'inactivity_window' },
+    });
+    for (const automation of automations) {
+      const config =
+        (automation.triggerConfig as Record<string, unknown>) ?? {};
+      const inactivityDays = Number(config.inactivityDays ?? 30);
+      const cutoff = new Date(
+        Date.now() - inactivityDays * 24 * 60 * 60 * 1000,
+      );
+
+      const inactiveContacts = await this.prisma.contact.findMany({
+        where: {
+          accountId: automation.accountId,
+          optOut: false,
+          // Contacts n'ayant pas eu d'envoi récent (proxy d'engagement)
+          sends: {
+            none: {
+              status: 'OPENED',
+              openedAt: { gte: cutoff },
+            },
+          },
+        },
+        select: { id: true },
+      });
+
+      for (const contact of inactiveContacts) {
+        await this.enqueueAutomationExecution(automation, contact.id, 0);
+      }
+      this.logger.log(
+        `Inactivity automation ${automation.id}: ${inactiveContacts.length} contacts ciblés (>${inactivityDays}j sans ouverture)`,
+      );
+    }
+  }
+
+  // US-011: trigger recurring_schedule — cron quotidien, config: { cronExpr, hour, minute }
+  @Cron(CronExpression.EVERY_HOUR)
+  async processRecurringScheduleAutomations() {
+    const automations = await this.prisma.automation.findMany({
+      where: { status: AutomationStatus.Active, trigger: 'recurring_schedule' },
+    });
+    const now = new Date();
+    for (const automation of automations) {
+      const config =
+        (automation.triggerConfig as Record<string, unknown>) ?? {};
+      const targetHour = Number(config.hour ?? 9);
+      const targetMinute = Number(config.minute ?? 0);
+      if (
+        now.getUTCHours() !== targetHour ||
+        Math.abs(now.getUTCMinutes() - targetMinute) > 30
+      )
+        continue;
+
+      const lastFiredAt = config.lastFiredAt
+        ? new Date(config.lastFiredAt as string)
+        : null;
+      if (
+        lastFiredAt &&
+        now.getTime() - lastFiredAt.getTime() < 23 * 60 * 60 * 1000
+      )
+        continue; // déjà lancé aujourd'hui
+
+      const contacts = await this.prisma.contact.findMany({
+        where: { accountId: automation.accountId, optOut: false },
+        select: { id: true },
+      });
+      for (const contact of contacts) {
+        await this.enqueueAutomationExecution(automation, contact.id, 0);
+      }
+      await this.prisma.automation.update({
+        where: { id: automation.id },
+        data: {
+          triggerConfig: {
+            ...(config as object),
+            lastFiredAt: now.toISOString(),
+          } as Prisma.InputJsonValue,
+        },
+      });
+      this.logger.log(
+        `Recurring automation ${automation.id} fired for ${contacts.length} contacts`,
+      );
+    }
+  }
+
   @Cron(CronExpression.EVERY_MINUTE)
   async processDueDateBasedAutomations() {
     const automations = await this.prisma.automation.findMany({
@@ -325,10 +412,13 @@ export class AutomationsService {
         (automation.triggerConfig as Record<string, unknown> | null) ?? {};
       const firedAt = triggerConfig?.firedAt;
       const runAtValue =
-        triggerConfig?.runAt ?? triggerConfig?.date ?? triggerConfig?.scheduledAt;
+        triggerConfig?.runAt ??
+        triggerConfig?.date ??
+        triggerConfig?.scheduledAt;
 
       if (firedAt) continue;
-      if (typeof runAtValue !== 'string' && !(runAtValue instanceof Date)) continue;
+      if (typeof runAtValue !== 'string' && !(runAtValue instanceof Date))
+        continue;
 
       const runAt = new Date(runAtValue as string | Date);
       if (Number.isNaN(runAt.getTime()) || runAt.getTime() > now) continue;
@@ -417,7 +507,11 @@ export class AutomationsService {
 
   private async scheduleAutomationsForTrigger(params: {
     accountId: string;
-    trigger: 'contact_added' | 'segment_joined' | 'campaign_opened' | 'link_clicked';
+    trigger:
+      | 'contact_added'
+      | 'segment_joined'
+      | 'campaign_opened'
+      | 'link_clicked';
     contactId: string;
     campaignId?: string;
     segmentId?: string;
@@ -433,7 +527,9 @@ export class AutomationsService {
 
     for (const automation of automations) {
       const automationCampaignId =
-        automation.campaignId || (automation.triggerConfig as any)?.campaignId || null;
+        automation.campaignId ||
+        (automation.triggerConfig as any)?.campaignId ||
+        null;
       const automationSegmentId =
         (automation.triggerConfig as any)?.segmentId || null;
       if (
@@ -457,7 +553,7 @@ export class AutomationsService {
         params.contactId,
         typeof params.delaySeconds === 'number'
           ? params.delaySeconds
-          : automation.delaySeconds ?? 0,
+          : (automation.delaySeconds ?? 0),
       );
 
       this.logger.log(
@@ -521,7 +617,9 @@ export class AutomationsService {
       return contact ? [contact] : [];
     }
 
-    const segmentId = explicitSegmentId || (await this.resolveCampaignSegmentId(automation.campaignId));
+    const segmentId =
+      explicitSegmentId ||
+      (await this.resolveCampaignSegmentId(automation.campaignId));
     if (!segmentId) return [];
 
     const segment = await this.prisma.segment.findFirst({
@@ -529,7 +627,9 @@ export class AutomationsService {
     });
     if (!segment) return [];
 
-    const parsed = this.contactsService.normalizeSegmentCriteria(segment.criteria);
+    const parsed = this.contactsService.normalizeSegmentCriteria(
+      segment.criteria,
+    );
     const where = this.contactsService.buildWhereForSegment(
       automation.accountId,
       parsed.logic,
@@ -679,6 +779,17 @@ export class AutomationsService {
       const node = nodes[currentNodeId];
       if (!node) break;
       const nodeType = this.normalizeNodeType(node.type);
+
+      // US-012: persistance du nœud en cours avant exécution (resume resilience)
+      await this.prisma.workflowExecution
+        .update({
+          where: { id: execution.id },
+          data: { currentNodeId, status: 'Running' },
+        })
+        .catch(() => {
+          /* non-bloquant */
+        });
+
       this.logger.debug(
         `Execution ${execution.id}: entering node ${node.id} type=${nodeType}`,
       );
@@ -1171,8 +1282,10 @@ export class AutomationsService {
           firstName: contact.firstName ?? undefined,
           lastName: contact.lastName ?? undefined,
           fullName:
-            [contact.firstName, contact.lastName].filter(Boolean).join(' ').trim() ||
-            undefined,
+            [contact.firstName, contact.lastName]
+              .filter(Boolean)
+              .join(' ')
+              .trim() || undefined,
           email: contact.email ?? undefined,
           phone: contact.phone ?? undefined,
           companyName: (campaign as any)?.account?.companyName || undefined,

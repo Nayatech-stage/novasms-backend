@@ -11,9 +11,18 @@ async function bootstrap() {
 
   // Préfixe global pour toutes les routes API
   app.setGlobalPrefix('api');
-  // Capture raw body to allow strict webhook HMAC verification when needed
+
+  // CORS doit être activé AVANT bodyParser pour que les headers
+  // soient présents même sur les réponses d'erreur (413, 401, etc.)
+  app.enableCors({
+    origin: [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
+    credentials: true,
+  });
+
+  // Capture raw body + limite portée à 10 Mo pour les imports CSV en chunks
   app.use(
     bodyParser.json({
+      limit: '10mb',
       verify: (req: any, _res, buf: Buffer) => {
         req.rawBody = buf;
       },
@@ -21,10 +30,6 @@ async function bootstrap() {
   );
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.enableCors({
-    origin: [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
-    credentials: true,
-  });
 
   const config = new DocumentBuilder()
     .setTitle('NovaSMS API')

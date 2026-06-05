@@ -37,8 +37,32 @@ export class CampaignScheduleProcessor extends WorkerHost {
     if (campaign.accountId !== accountId) {
       return { success: false, error: 'Campaign/account mismatch' };
     }
-    if (campaign.status === CampaignStatus.CANCELLED)
+    if (campaign.status === CampaignStatus.CANCELLED) {
+      // US-009: cleanup des jobs dispatch en attente
+      try {
+        await this.dispatchQueue.clean(0, 1000, 'delayed');
+      } catch {
+        /* non-bloquant */
+      }
       return { success: false, reason: 'cancelled' };
+    }
+
+    // US-009: fenêtre horaire — ne pas envoyer entre 22h et 8h UTC
+    const nowHour = new Date().getUTCHours();
+    const inQuietHours = nowHour >= 22 || nowHour < 8;
+    if (inQuietHours) {
+      // Replanifier dans 30 min pour respecter la fenêtre d'envoi
+      const delayMs = 30 * 60 * 1000;
+      await this.dispatchQueue.add('reschedule-quiet-hours', job.data, {
+        delay: delayMs,
+        jobId: `reschedule-${campaignId}-${Date.now()}`,
+        removeOnComplete: true,
+      });
+      this.logger.log(
+        `Campaign ${campaignId} deferred 30min (quiet hours: ${nowHour}h UTC)`,
+      );
+      return { success: false, reason: 'quiet-hours-deferred' };
+    }
 
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },

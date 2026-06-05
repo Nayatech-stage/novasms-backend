@@ -3,6 +3,7 @@ import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { JwtBlacklistService } from './jwt-blacklist.service';
 
 // Validation des variables d'environnement JWT
 const jwtAccessSecret = process.env.JWT_ACCESS_SECRET;
@@ -30,8 +31,8 @@ const accessExpiresIn = jwtAccessExpiration as JwtSignOptions['expiresIn'];
       signOptions: { expiresIn: accessExpiresIn },
     }),
   ],
-  providers: [JwtStrategy, JwtAuthGuard],
-  exports: [JwtAuthGuard],
+  providers: [JwtStrategy, JwtAuthGuard, JwtBlacklistService],
+  exports: [JwtAuthGuard, JwtBlacklistService],
 })
 export class JwtAuthModule {
   private readonly __moduleBrand = true;
