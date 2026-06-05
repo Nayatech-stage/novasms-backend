@@ -59,18 +59,12 @@ export class AuthService {
     private smsProviderFactory: SmsProviderFactory,
   ) {}
 
-  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   async register(data: RegisterDto | any) {
     // Normalize incoming payloads: support both French DTO and older API shape
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const email = (data && (data.email ?? data.adminEmail)) || null;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const password = (data && (data.motDePasse ?? data.password)) || null;
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const nom =
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       (data && (data.nom ?? data.companyName)) || 'Nouvelle entreprise';
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
     const pays = (data && (data.pays ?? data.country)) || 'CI';
 
     if (!email || !password) {
@@ -419,7 +413,6 @@ export class AuthService {
 
     let isTotpValid = false;
     if (authAccount.twoFactorSecret) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
       isTotpValid = speakeasy.totp.verify({
         secret: authAccount.twoFactorSecret,
         encoding: 'base32',
@@ -729,7 +722,6 @@ export class AuthService {
     });
     if (!account) throw new BadRequestException('Account not found');
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const secret = speakeasy.generateSecret({
       name: `NovaSMS (${account.adminEmail})`,
       issuer: 'NovaSMS',
@@ -765,7 +757,6 @@ export class AuthService {
     const secret = account.twoFactorSecret;
     if (!secret) throw new BadRequestException('2FA secret not set');
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const ok = speakeasy.totp.verify({
       secret,
       encoding: 'base32',
