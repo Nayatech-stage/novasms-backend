@@ -120,6 +120,31 @@ export class AnalyticsService {
       });
     }
 
+    const recentOpensRaw = await this.prisma.analytic.findMany({
+      where: {
+        action: { in: ['Open', 'Click'] } as any,
+        createdAt: { gte: since },
+        campaign: { accountId },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      include: {
+        contact: { select: { email: true, firstName: true, lastName: true } },
+        campaign: { select: { name: true } },
+      },
+    });
+
+    const recentOpens = (recentOpensRaw ?? []).map((a: any) => ({
+      action: a.action as string,
+      createdAt: a.createdAt?.toISOString?.() ?? new Date().toISOString(),
+      contact: {
+        email: a.contact?.email ?? '',
+        firstName: a.contact?.firstName ?? null,
+        lastName: a.contact?.lastName ?? null,
+      },
+      campaignName: a.campaign?.name ?? '',
+    }));
+
     const heatmapRows = await this.prisma.engagementHeatmap.findMany({
       where: {
         campaign: {
@@ -154,6 +179,7 @@ export class AnalyticsService {
       byChannel,
       evolution,
       heatmap,
+      recentOpens,
       previous: {
         messagesSent: prevSent,
         openRate: prevSent > 0 ? (prevOpened / prevSent) * 100 : 0,
@@ -240,13 +266,21 @@ export class AnalyticsService {
       clicked,
       bounced,
       unsubscribed,
-      contactsOpened: contactsOpened.map((a) => ({
-        contactId: a.contactId,
-        at: a.createdAt,
+      contactsOpened: contactsOpened.map((a: any) => ({
+        contact: {
+          email: a.contact?.email ?? '',
+          firstName: a.contact?.firstName ?? undefined,
+          lastName: a.contact?.lastName ?? undefined,
+        },
+        createdAt: a.createdAt?.toISOString?.() ?? new Date().toISOString(),
       })),
-      contactsClicked: contactsClicked.map((a) => ({
-        contactId: a.contactId,
-        at: a.createdAt,
+      contactsClicked: contactsClicked.map((a: any) => ({
+        contact: {
+          email: a.contact?.email ?? '',
+          firstName: a.contact?.firstName ?? undefined,
+          lastName: a.contact?.lastName ?? undefined,
+        },
+        createdAt: a.createdAt?.toISOString?.() ?? new Date().toISOString(),
       })),
       clickHeat,
     };

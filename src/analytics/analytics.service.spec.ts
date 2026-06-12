@@ -217,7 +217,12 @@ describe('AnalyticsService — analytics réelles (US-013/US-014)', () => {
         clicked: 20,
         bounced: 5,
         unsubscribed: 2,
-        contactsOpened: [{ contactId: 'ct-1', at: openedAt }],
+        contactsOpened: [
+          {
+            contact: { email: '', firstName: undefined, lastName: undefined },
+            createdAt: openedAt.toISOString(),
+          },
+        ],
         contactsClicked: [],
       });
       expect(report.clickHeat).toHaveLength(1);
