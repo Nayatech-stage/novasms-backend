@@ -38,31 +38,33 @@ export class GdprAnonymizationService {
     }
 
     const now = new Date();
-    for (const contact of expired) {
-      await this.prisma.contact.update({
-        where: { id: contact.id },
-        data: {
-          email: null,
-          phone: null,
-          firstName: null,
-          lastName: null,
-          location: null,
-          tags: [],
-          notes: [],
-          anonymizedAt: now,
+    const expiredIds = expired.map((c) => c.id);
+
+    // Batch update — évite le pattern N+1
+    await this.prisma.contact.updateMany({
+      where: { id: { in: expiredIds } },
+      data: {
+        email: null,
+        phone: null,
+        firstName: null,
+        lastName: null,
+        location: null,
+        tags: [],
+        notes: [],
+        anonymizedAt: now,
+      },
+    });
+
+    await this.prisma.auditLog.createMany({
+      data: expired.map((contact) => ({
+        accountId: contact.accountId,
+        action: 'contact.gdpr_anonymized',
+        details: {
+          contactId: contact.id,
+          retentionDays: GdprAnonymizationService.RETENTION_DAYS,
         },
-      });
-      await this.prisma.auditLog.create({
-        data: {
-          accountId: contact.accountId,
-          action: 'contact.gdpr_anonymized',
-          details: {
-            contactId: contact.id,
-            retentionDays: GdprAnonymizationService.RETENTION_DAYS,
-          },
-        },
-      });
-    }
+      })),
+    });
 
     this.logger.log(
       `RGPD: ${expired.length} contact(s) anonymisé(s) (désabonnés depuis plus de ${GdprAnonymizationService.RETENTION_DAYS} jours)`,

@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { ContactsService } from '../contacts/contacts.service';
+import { randomInt } from 'crypto';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -1016,9 +1017,15 @@ export class CampaignsService {
       }
 
       const isABCampaign = Boolean(campaign.subjectB);
-      const shuffledContacts = [...deliveryContacts].sort(
-        () => Math.random() - 0.5,
-      );
+      // Fisher-Yates avec crypto.randomInt — évite le biais de Math.random
+      const shuffledContacts = [...deliveryContacts];
+      for (let i = shuffledContacts.length - 1; i > 0; i--) {
+        const j = randomInt(0, i + 1);
+        [shuffledContacts[i], shuffledContacts[j]] = [
+          shuffledContacts[j],
+          shuffledContacts[i],
+        ];
+      }
       const requestedTestPct = campaign.abSplitPct || 50;
       const normalizedTestPct = Math.max(0, Math.min(100, requestedTestPct));
 

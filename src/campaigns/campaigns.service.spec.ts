@@ -47,6 +47,9 @@ describe('CampaignsService A/B flow', () => {
       send: {
         createMany: jest.fn().mockResolvedValue({ count: 10 }),
       },
+      account: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
     };
 
     const dispatchQueue = {

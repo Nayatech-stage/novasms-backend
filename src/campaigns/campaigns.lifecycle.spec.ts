@@ -14,6 +14,7 @@ describe('CampaignsService — cycle de vie (US-009 / NEW-T05)', () => {
       count: jest.fn(),
     },
     segment: { findUnique: jest.fn() },
+    account: { findUnique: jest.fn().mockResolvedValue(null) },
     $transaction: jest.fn(),
   };
 

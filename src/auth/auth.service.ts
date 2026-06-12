@@ -12,7 +12,7 @@ import { MailService } from '../mail/mail.service';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 import * as bcrypt from 'bcryptjs';
 import { RegisterDto } from './dto/register.dto';
-import { randomUUID } from 'crypto';
+import { randomUUID, randomInt } from 'crypto';
 import * as speakeasy from 'speakeasy';
 import { UserRole } from '@prisma/client'; // ✅ Import de l'enum Prisma
 
@@ -714,12 +714,9 @@ export class AuthService {
   private generateBackupCodes(count = 10): string[] {
     const codes: string[] = [];
     for (let i = 0; i < count; i++) {
-      const code = `${Math.floor(Math.random() * 10000)
-        .toString()
-        .padStart(4, '0')}-${Math.floor(Math.random() * 10000)
-        .toString()
-        .padStart(4, '0')}`;
-      codes.push(code);
+      const a = randomInt(0, 10000).toString().padStart(4, '0');
+      const b = randomInt(0, 10000).toString().padStart(4, '0');
+      codes.push(`${a}-${b}`);
     }
     return codes;
   }
@@ -846,7 +843,7 @@ export class AuthService {
     });
     if (!account) throw new BadRequestException('Account not found');
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomInt(100000, 1000000).toString();
     const expiry = new Date(Date.now() + 10 * 60 * 1000);
 
     await this.prisma.account.update({

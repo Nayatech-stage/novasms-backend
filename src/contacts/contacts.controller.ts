@@ -31,6 +31,7 @@ import { importQueue } from '../queues/import.queue';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { randomUUID } from 'crypto';
 
 import { SegmentCreateSchema, SegmentPreviewSchema } from './dto/segment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -139,15 +140,10 @@ export class ContactsController {
   @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Post('import/start')
   @ApiOperation({ summary: 'Démarrer un import par chunks (retourne fileId)' })
-  async startImport(
-    @Body() body: { fileName?: string },
-    @Request() req: TenantRequest,
-  ) {
+  async startImport(@Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    const fileId =
-      (globalThis as any).crypto?.randomUUID?.() ||
-      `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const fileId = randomUUID();
     const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
     await fs.promises.mkdir(dir, { recursive: true });
     const filePath = path.join(dir, `${fileId}.ndjson`);

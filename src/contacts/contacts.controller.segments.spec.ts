@@ -45,13 +45,13 @@ describe('ContactsController — segments et import par chunks', () => {
 
   describe('import par chunks (start / chunk / complete)', () => {
     it('startImport rejette sans accountId', async () => {
-      await expect(
-        controller.startImport({ fileName: 'f.csv' }, reqAnonyme),
-      ).rejects.toThrow(BadRequestException);
+      await expect(controller.startImport(reqAnonyme)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('startImport crée un fileId et le fichier temporaire', async () => {
-      const result = await controller.startImport({ fileName: 'f.csv' }, req);
+      const result = await controller.startImport(req);
       expect(result.success).toBe(true);
       expect(result.fileId).toBeTruthy();
     });
@@ -84,10 +84,7 @@ describe('ContactsController — segments et import par chunks', () => {
     });
 
     it('uploadImportChunk ajoute les lignes au fichier existant', async () => {
-      const { fileId } = await controller.startImport(
-        { fileName: 'f.csv' },
-        req,
-      );
+      const { fileId } = await controller.startImport(req);
       const result = await controller.uploadImportChunk(
         { fileId, rows: [{ telephone: '+2250700000001' }] },
         req,
@@ -120,10 +117,7 @@ describe('ContactsController — segments et import par chunks', () => {
       importService.processFullImportFromFile.mockResolvedValue({
         imported: 3,
       });
-      const { fileId } = await controller.startImport(
-        { fileName: 'f.csv' },
-        req,
-      );
+      const { fileId } = await controller.startImport(req);
       const result = await controller.completeImport(
         { fileId, fileName: '' },
         req,

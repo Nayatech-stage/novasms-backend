@@ -105,6 +105,8 @@ describe('TemplatesService — templates de campagne (EN-1654)', () => {
 
       expect(prisma.template.findMany).toHaveBeenCalledWith({
         orderBy: { createdAt: 'desc' },
+        take: 50,
+        skip: 0,
       });
     });
 

@@ -5,10 +5,10 @@ describe('GdprAnonymizationService — anonymisation RGPD < 30j', () => {
   const prisma = {
     contact: {
       findMany: jest.fn(),
-      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     auditLog: {
-      create: jest.fn().mockResolvedValue({}),
+      createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
 
@@ -25,8 +25,8 @@ describe('GdprAnonymizationService — anonymisation RGPD < 30j', () => {
     const result = await service.anonymizeExpiredOptOuts();
 
     expect(result).toEqual({ anonymized: 0 });
-    expect(prisma.contact.update).not.toHaveBeenCalled();
-    expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    expect(prisma.contact.updateMany).not.toHaveBeenCalled();
+    expect(prisma.auditLog.createMany).not.toHaveBeenCalled();
   });
 
   it('cible uniquement les optOut > 30 jours non encore anonymisés', async () => {
@@ -55,10 +55,11 @@ describe('GdprAnonymizationService — anonymisation RGPD < 30j', () => {
     const result = await service.anonymizeExpiredOptOuts();
 
     expect(result).toEqual({ anonymized: 2 });
-    expect(prisma.contact.update).toHaveBeenCalledTimes(2);
+    expect(prisma.contact.updateMany).toHaveBeenCalledTimes(1);
 
-    const updateData = prisma.contact.update.mock.calls[0][0].data;
-    expect(updateData).toMatchObject({
+    const updateCall = prisma.contact.updateMany.mock.calls[0][0];
+    expect(updateCall.where.id.in).toEqual(['c-1', 'c-2']);
+    expect(updateCall.data).toMatchObject({
       email: null,
       phone: null,
       firstName: null,
@@ -67,15 +68,15 @@ describe('GdprAnonymizationService — anonymisation RGPD < 30j', () => {
       tags: [],
       notes: [],
     });
-    expect(updateData.anonymizedAt).toBeInstanceOf(Date);
+    expect(updateCall.data.anonymizedAt).toBeInstanceOf(Date);
 
-    expect(prisma.auditLog.create).toHaveBeenCalledTimes(2);
-    expect(prisma.auditLog.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        accountId: 'acc-1',
-        action: 'contact.gdpr_anonymized',
-        details: expect.objectContaining({ contactId: 'c-1' }),
-      }),
+    expect(prisma.auditLog.createMany).toHaveBeenCalledTimes(1);
+    const auditRows = prisma.auditLog.createMany.mock.calls[0][0].data;
+    expect(auditRows).toHaveLength(2);
+    expect(auditRows[0]).toMatchObject({
+      accountId: 'acc-1',
+      action: 'contact.gdpr_anonymized',
+      details: expect.objectContaining({ contactId: 'c-1' }),
     });
   });
 });
