@@ -37,8 +37,14 @@ export class TemplatesService {
     });
   }
 
-  async findAll() {
-    return this.prisma.template.findMany({ orderBy: { createdAt: 'desc' } });
+  async findAll(page = 1, limit = 50) {
+    const take = Math.min(Math.max(limit, 1), 100);
+    const skip = (Math.max(page, 1) - 1) * take;
+    return this.prisma.template.findMany({
+      orderBy: { createdAt: 'desc' },
+      take,
+      skip,
+    });
   }
 
   async findOne(id: string) {

@@ -150,10 +150,14 @@ export class SegmentsService implements OnModuleDestroy {
     });
   }
 
-  async findAll(accountId: string) {
+  async findAll(accountId: string, page = 1, limit = 50) {
+    const take = Math.min(Math.max(limit, 1), 200);
+    const skip = (Math.max(page, 1) - 1) * take;
     return this.prisma.segment.findMany({
       where: { accountId },
       orderBy: { id: 'desc' },
+      take,
+      skip,
     });
   }
 

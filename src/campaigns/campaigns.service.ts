@@ -910,6 +910,33 @@ export class CampaignsService {
         };
       }
 
+      // NEW-CR1 : Bloquer si solde insuffisant avant de lancer l'envoi
+      const account = await this.prisma.account.findUnique({
+        where: { id: accountId },
+        select: { creditBalance: true },
+      });
+      if (account) {
+        const defaultCosts: Record<string, number> = { SMS: 5, EMAIL: 1 };
+        const channelKey = campaign.channelType.toUpperCase();
+        const envKey =
+          channelKey === 'SMS'
+            ? 'CREDIT_COST_PER_SMS'
+            : 'CREDIT_COST_PER_EMAIL';
+        const costPerSend = parseFloat(
+          process.env[envKey] || String(defaultCosts[channelKey] ?? 0),
+        );
+        const estimatedTotal = costPerSend * contacts.length;
+        if (
+          estimatedTotal > 0 &&
+          Number(account.creditBalance) < estimatedTotal
+        ) {
+          return {
+            success: false,
+            error: `Solde insuffisant — il vous faut ${estimatedTotal.toLocaleString('fr-FR')} FCFA pour ${contacts.length} contacts. Solde actuel : ${Number(account.creditBalance).toLocaleString('fr-FR')} FCFA.`,
+          };
+        }
+      }
+
       const emailTestRecipient = process.env.RESEND_TEST_RECIPIENT?.trim();
       const shouldRestrictEmailDelivery =
         campaign.channelType === 'EMAIL' && Boolean(emailTestRecipient);

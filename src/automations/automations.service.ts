@@ -142,10 +142,14 @@ export class AutomationsService {
     return automation;
   }
 
-  async listAutomations(accountId: string) {
+  async listAutomations(accountId: string, page = 1, limit = 50) {
+    const take = Math.min(Math.max(limit, 1), 200);
+    const skip = (Math.max(page, 1) - 1) * take;
     return this.prisma.automation.findMany({
       where: { accountId },
       orderBy: { createdAt: 'desc' },
+      take,
+      skip,
       include: {
         _count: {
           select: {
