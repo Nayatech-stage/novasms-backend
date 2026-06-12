@@ -4,7 +4,6 @@ import type { INestApplication } from '@nestjs/common';
 import { WebhookController } from './webhook.controller';
 import { WebhookService } from './webhook.service';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const supertest = require('supertest') as typeof import('supertest');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

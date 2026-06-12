@@ -95,10 +95,7 @@ function personalizeText(
   return value
     .replace(/\{\{(?:pr[eé]nom|firstName)\}\}/gi, context.firstName || '')
     .replace(/\{\{(?:nom|lastName|surname)\}\}/gi, context.lastName || '')
-    .replace(
-      /\{\{(?:fullName|nomComplet|name)\}\}/gi,
-      safeFullName || '',
-    )
+    .replace(/\{\{(?:fullName|nomComplet|name)\}\}/gi, safeFullName || '')
     .replace(/\{\{(?:email|e-mail)\}\}/gi, context.email || '')
     .replace(/\{\{(?:phone|tel|telephone)\}\}/gi, context.phone || '')
     .replace(

@@ -8,13 +8,15 @@ import {
   Put,
 } from '@nestjs/common';
 import { TemplatesService } from './templates.service';
+import { CreateTemplateDto } from './dto/create-template.dto';
+import { UpdateTemplateDto } from './dto/update-template.dto';
 
 @Controller('templates')
 export class TemplatesController {
   constructor(private readonly svc: TemplatesService) {}
 
   @Post()
-  create(@Body() body: any) {
+  create(@Body() body: CreateTemplateDto) {
     return this.svc.create(body);
   }
 
@@ -34,7 +36,7 @@ export class TemplatesController {
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
+  update(@Param('id') id: string, @Body() body: UpdateTemplateDto) {
     return this.svc.update(id, body);
   }
 
@@ -44,7 +46,10 @@ export class TemplatesController {
   }
 
   @Post(':id/preview')
-  async preview(@Param('id') id: string, @Body() vars: any) {
+  async preview(
+    @Param('id') id: string,
+    @Body() vars: Record<string, unknown>,
+  ) {
     const t = await this.svc.findOne(id);
     // simple token replacement for preview
     let html = t.htmlContent || '';

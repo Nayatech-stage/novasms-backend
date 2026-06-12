@@ -25,7 +25,7 @@ import type { Request as ExpressRequest } from 'express';
 import type { Response } from 'express';
 import type { Express } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { UseGuards } from '@nestjs/common';
+import { Logger, UseGuards } from '@nestjs/common';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 import { RolesGuard, RequireRoles } from '../common';
@@ -37,6 +37,8 @@ type TenantRequest = ExpressRequest & { accountId?: string };
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class CampaignsController {
+  private readonly logger = new Logger(CampaignsController.name);
+
   constructor(
     private campaignsService: CampaignsService,
     private fileUploadService: FileUploadService,
@@ -102,6 +104,16 @@ export class CampaignsController {
     return this.campaignsService.duplicateCampaign(accountId, id);
   }
 
+  @Get('automation-ready')
+  async listAutomationReady(
+    @Request() req: TenantRequest,
+    @Query('channel') channel?: string,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new Error('accountId manquant');
+    return this.campaignsService.listAutomationCampaigns(accountId, channel);
+  }
+
   @Get(':id')
   async get(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
@@ -119,14 +131,6 @@ export class CampaignsController {
     const accountId = req.accountId;
     if (!accountId) throw new Error('accountId manquant');
     const result = await this.campaignsService.update(accountId, id, body);
-    console.log(
-      '[DEBUG] controller.update body param:',
-      (body as any)?.segmentId,
-      'req.body:',
-      (req as any).body,
-      'result.segmentId:',
-      (result as any)?.segmentId,
-    );
     // Some clients/tests expect a scalar `segmentId` even when the DB
     // returned null; if the caller requested a segment connect, mirror it.
     try {
@@ -346,7 +350,10 @@ export class CampaignsController {
 
       return res.status(200).json(result);
     } catch (error) {
-      console.error('Send campaign error:', error);
+      this.logger.error(
+        'Send campaign error',
+        error instanceof Error ? error.stack : String(error),
+      );
       const status = error instanceof HttpException ? error.getStatus() : 500;
       const message =
         error instanceof HttpException
@@ -372,7 +379,10 @@ export class CampaignsController {
       const result = await this.campaignsService.saveDraft(accountId, id, body);
       return { success: true, data: result, message: 'Brouillon sauvegardé' };
     } catch (error) {
-      console.error('Save draft error:', error);
+      this.logger.error(
+        'Save draft error',
+        error instanceof Error ? error.stack : String(error),
+      );
       return {
         success: false,
         error: "Une erreur s'est produite. Veuillez réessayer.",
@@ -407,7 +417,10 @@ export class CampaignsController {
         data: result,
       };
     } catch (error) {
-      console.error('Cancel campaign error:', error);
+      this.logger.error(
+        'Cancel campaign error',
+        error instanceof Error ? error.stack : String(error),
+      );
       return {
         success: false,
         error: "Une erreur s'est produite. Veuillez réessayer.",

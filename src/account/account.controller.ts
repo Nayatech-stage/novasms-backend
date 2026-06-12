@@ -12,7 +12,7 @@ import {
   NotFoundException,
   Res,
 } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,9 +41,12 @@ export class AccountController {
   @Get('me')
   @ApiOperation({ summary: "Profil de l'utilisateur connecté" })
   async getMe(@Request() req: TenantRequest) {
-    const userId = req.user.sub;
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
+    const accountId = req.user.accountId || req.accountId;
+    const email = req.user.email;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+
+    const user = await this.prisma.user.findFirst({
+      where: { email, accountId },
       select: {
         id: true,
         email: true,
@@ -126,11 +129,11 @@ export class AccountController {
 
   @Patch('settings')
   @ApiOperation({
-    summary: 'Mettre à jour les paramètres du compte (seuil alerte)',
+    summary: 'Mettre à jour les paramètres du compte',
   })
   async updateSettings(
     @Request() req: TenantRequest,
-    @Body() body: { alertThreshold?: number },
+    @Body() body: { alertThreshold?: number; creditLimit?: number },
   ) {
     const accountId = req.user.accountId || req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
@@ -138,6 +141,24 @@ export class AccountController {
     const data: Record<string, unknown> = {};
     if (typeof body.alertThreshold === 'number') {
       data['alertThreshold'] = body.alertThreshold;
+    }
+    if (typeof body.creditLimit === 'number') {
+      const account = await this.prisma.account.findUnique({
+        where: { id: accountId },
+        select: { creditBalance: true },
+      });
+      if (!account) throw new BadRequestException('Compte introuvable');
+      if (body.creditLimit > Number(account.creditBalance)) {
+        throw new BadRequestException(
+          "La limite d'utilisation ne peut pas dépasser le solde actuel",
+        );
+      }
+      if (body.creditLimit < 0) {
+        throw new BadRequestException(
+          "La limite d'utilisation doit être positive",
+        );
+      }
+      data['creditLimit'] = body.creditLimit;
     }
 
     await this.prisma.account.update({ where: { id: accountId }, data });
@@ -329,7 +350,8 @@ export class AccountController {
     @Request() req: TenantRequest,
     @Body() body: { currentPassword: string; newPassword: string },
   ) {
-    const userId = req.user.sub;
+    const accountId = req.user.accountId || req.accountId;
+    const email = req.user.email;
     if (!body.currentPassword || !body.newPassword) {
       throw new BadRequestException('Mot de passe actuel et nouveau requis');
     }
@@ -339,7 +361,9 @@ export class AccountController {
       );
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findFirst({
+      where: { email, accountId },
+    });
     if (!user) throw new NotFoundException('Utilisateur introuvable');
 
     const valid = await bcrypt.compare(body.currentPassword, user.passwordHash);
@@ -347,7 +371,7 @@ export class AccountController {
 
     const hash = await bcrypt.hash(body.newPassword, 12);
     await this.prisma.user.update({
-      where: { id: userId },
+      where: { id: user.id },
       data: { passwordHash: hash },
     });
 
@@ -364,7 +388,7 @@ export class AccountController {
 
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
-      select: { creditBalance: true, alertThreshold: true },
+      select: { creditBalance: true, alertThreshold: true, creditLimit: true },
     });
     if (!account) throw new NotFoundException('Compte introuvable');
 
@@ -374,6 +398,7 @@ export class AccountController {
       alertThreshold: account.alertThreshold
         ? Number(account.alertThreshold)
         : null,
+      creditLimit: account.creditLimit ? Number(account.creditLimit) : null,
     };
   }
 
@@ -405,7 +430,8 @@ export class AccountController {
           firstName: true,
           lastName: true,
           tags: true,
-          status: true,
+          location: true,
+          optOut: true,
           createdAt: true,
         },
         orderBy: { createdAt: 'desc' },
@@ -415,11 +441,13 @@ export class AccountController {
         select: {
           id: true,
           name: true,
-          channel: true,
+          channelType: true,
           status: true,
-          sentAt: true,
-          openRate: true,
-          clickRate: true,
+          sentCount: true,
+          deliveredCount: true,
+          openedCount: true,
+          clickedCount: true,
+          scheduledAt: true,
           createdAt: true,
         },
         orderBy: { createdAt: 'desc' },

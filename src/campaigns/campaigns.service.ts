@@ -202,8 +202,6 @@ export class CampaignsService {
       }
     }
 
-    console.log('[DEBUG] Creating campaign payload lengths:', fieldLengths);
-
     // Validate name length to avoid Prisma P2000 when clients send too-long names
     const nameValue = payload.name;
     if (typeof nameValue === 'string' && nameValue.length > 255) {
@@ -216,11 +214,9 @@ export class CampaignsService {
     try {
       campaign = await this.prisma.campaign.create({ data: payload });
     } catch (err: unknown) {
-      console.error(
-        '[DEBUG] prisma.campaign.create failed, payload:',
-        JSON.stringify(payload).slice(0, 2000),
+      this.logger.error(
+        `prisma.campaign.create failed, payload: ${JSON.stringify(payload).slice(0, 2000)} — field lengths: ${JSON.stringify(fieldLengths)}`,
       );
-      console.error('[DEBUG] Field lengths:', fieldLengths);
       // rethrow to preserve original error (so tests see failure) but log extra context
       throw err as Error;
     }
@@ -363,6 +359,27 @@ export class CampaignsService {
     };
   }
 
+  async listAutomationCampaigns(accountId: string, channel?: string) {
+    const where: Prisma.CampaignWhereInput = {
+      accountId,
+      status: CampaignStatus.AUTOMATION,
+    };
+    if (channel) {
+      where.channelType = channel.toUpperCase();
+    }
+    return this.prisma.campaign.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        channelType: true,
+        status: true,
+        updatedAt: true,
+      },
+    });
+  }
+
   async update(
     accountId: string,
     id: string,
@@ -422,18 +439,11 @@ export class CampaignsService {
     }
     if (body.segmentId !== undefined) {
       const segmentId = asOptionalString(body.segmentId);
-      console.log('[DEBUG] update called with segmentId:', segmentId);
       if (segmentId) {
         // verify segment exists and belongs to the account
         const seg = await this.prisma.segment.findUnique({
           where: { id: segmentId },
         });
-        console.log(
-          '[DEBUG] found segment for connect:',
-          seg?.id,
-          'accountId:',
-          seg?.accountId,
-        );
         if (!seg || seg.accountId !== accountId) {
           throw new BadRequestException('Segment introuvable');
         }
@@ -492,8 +502,6 @@ export class CampaignsService {
         data: payload,
       });
 
-      console.log('[DEBUG] prisma.update returned:', updated);
-
       // Ensure segmentId is visible to callers (some clients expect scalar segmentId)
       const refreshed = await this.prisma.campaign.findUnique({
         where: { id: updated.id },
@@ -523,10 +531,6 @@ export class CampaignsService {
         (refreshed as any).segmentId = requested;
       }
 
-      console.log('[DEBUG] campaign update result:', {
-        updatedId: updated.id,
-        segmentId: refreshed?.segmentId,
-      });
       return refreshed;
     } catch (err: unknown) {
       // Translate Prisma errors for nicer test messages
@@ -543,6 +547,16 @@ export class CampaignsService {
       select: { id: true, status: true },
     });
     if (!campaign) throw new BadRequestException('Campagne introuvable');
+
+    // NEW-T05 : une campagne envoyée doit rester consultable (rapports, audit)
+    if (
+      campaign.status === CampaignStatus.SENT ||
+      campaign.status === CampaignStatus.SENDING
+    ) {
+      throw new BadRequestException(
+        "Impossible de supprimer une campagne envoyée ou en cours d'envoi",
+      );
+    }
 
     await this.prisma.campaign.delete({ where: { id: campaign.id } });
     return { success: true, id: campaign.id };

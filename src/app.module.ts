@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
-import { SegmentsController } from './segments.controller';
 import { AppService } from './app.service';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
@@ -26,6 +25,7 @@ import { TrackModule } from './track/track.module';
 import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 import { WhatsappProviderFactory } from './providers/whatsapp/whatsapp.provider.factory';
+import { PaymentProviderFactory } from './providers/payment/payment.provider.factory';
 
 const isTestEnvironment =
   process.env.NODE_ENV === 'test' ||
@@ -61,12 +61,13 @@ const isTestEnvironment =
     TrackModule,
     WebhookModule,
   ],
-  controllers: [AppController, SegmentsController],
+  controllers: [AppController],
   providers: [
     AppService,
     EmailProviderFactory,
     SmsProviderFactory,
     WhatsappProviderFactory,
+    PaymentProviderFactory,
     { provide: APP_INTERCEPTOR, useClass: TenantInterceptor },
   ],
 })

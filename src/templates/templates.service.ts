@@ -1,4 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { CreateTemplateDto } from './dto/create-template.dto';
+import { UpdateTemplateDto } from './dto/update-template.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -18,7 +20,7 @@ export class TemplatesService {
     return account.id;
   }
 
-  async create(data: any) {
+  async create(data: CreateTemplateDto) {
     const accountId = await this.resolveAccountId(data.accountId);
     return this.prisma.template.create({
       data: {
@@ -28,7 +30,7 @@ export class TemplatesService {
         channelType: data.channelType ?? data.channel ?? null,
         htmlContent: data.htmlContent ?? data.contentHtml ?? null,
         contentText: data.contentText ?? null,
-        variables: data.variables ?? null,
+        variables: data.variables ?? undefined,
         createdBy: data.createdBy ?? null,
         isPreset: data.isPreset ?? false,
       },
@@ -49,7 +51,7 @@ export class TemplatesService {
     return this.prisma.template.findUnique({ where: { key } });
   }
 
-  async update(id: string, data: any) {
+  async update(id: string, data: UpdateTemplateDto) {
     await this.findOne(id);
     return this.prisma.template.update({
       where: { id },
@@ -58,7 +60,7 @@ export class TemplatesService {
         channelType: data.channelType ?? data.channel,
         htmlContent: data.htmlContent ?? data.contentHtml,
         contentText: data.contentText,
-        variables: data.variables,
+        variables: data.variables ?? undefined,
         createdBy: data.createdBy,
         isPreset: data.isPreset,
       },

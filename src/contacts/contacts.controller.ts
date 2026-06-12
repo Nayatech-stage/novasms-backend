@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-base-to-string */
 import {
   BadRequestException,
   Body,
@@ -68,7 +67,19 @@ export class ContactsController {
 
   @Get()
   @ApiOperation({ summary: 'Lister contacts' })
-  async list(@Query() q: any, @Request() req: TenantRequest) {
+  async list(
+    @Query()
+    q: {
+      cursor?: string;
+      limit?: string;
+      search?: string;
+      location?: string;
+      tag?: string;
+      dateAddedFrom?: string;
+      dateAddedTo?: string;
+    },
+    @Request() req: TenantRequest,
+  ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     return this.contactsService.findAll(accountId, {
@@ -95,7 +106,7 @@ export class ContactsController {
 
     const mappedRows = body.rows
       .map((row) => {
-        const c: any = {};
+        const c: Record<string, string | string[]> = {};
         for (const [t, s] of Object.entries(body.mapping || {})) {
           const v = row[s];
           if (v === undefined || v === null || v === '') continue;
@@ -110,7 +121,7 @@ export class ContactsController {
         }
         return c;
       })
-      .filter((r: any) => r.email || r.phone);
+      .filter((r) => r.email || r.phone);
 
     const result = await this.importService.startImport(
       accountId,
@@ -295,6 +306,26 @@ export class ContactsController {
     return { success: true };
   }
 
+  @Post(':id/notes')
+  @ApiOperation({ summary: 'Ajouter une note a un contact' })
+  @HttpCode(HttpStatus.CREATED)
+  async addNote(
+    @Param('id') id: string,
+    @Body() body: { content: string },
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    if (!body?.content?.trim())
+      throw new BadRequestException('Note content is required');
+    const notes = await this.contactsService.addNote(
+      accountId,
+      id,
+      body.content.trim(),
+    );
+    return { success: true, notes };
+  }
+
   @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Delete(':id')
   @ApiOperation({ summary: 'Supprimer un contact' })
@@ -320,10 +351,11 @@ export class ContactsController {
         logic: parsed.logic,
         criteria: parsed.criteria,
       });
-    } catch (e: any) {
+    } catch (e) {
+      const err = e as { errors?: unknown[]; message?: string };
       throw new BadRequestException({
         message: 'Payload invalide',
-        errors: e.errors || [e.message],
+        errors: err.errors || [err.message],
       });
     }
   }
@@ -381,10 +413,11 @@ export class ContactsController {
         segment,
         message: `Segment "${parsed.name}" cree pour ${segment.contactCount} contacts`,
       };
-    } catch (e: any) {
+    } catch (e) {
+      const err = e as { errors?: unknown[]; message?: string };
       throw new BadRequestException({
         message: 'Echec creation',
-        errors: e.errors || [e.message],
+        errors: err.errors || [err.message],
       });
     }
   }

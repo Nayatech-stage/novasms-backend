@@ -92,6 +92,7 @@ model Account {
   country               String    @db.Char(3)
   creditBalance         Decimal   @default(0) @db.Decimal(12,2)
   alertThreshold        Decimal?  @db.Decimal(12,2)
+  creditLimit           Decimal?  @db.Decimal(12,2)
   createdAt             DateTime  @default(now()) @db.Timestamp
   gdprStatus            String    @default("active") @db.VarChar(50)
   emailVerified         Boolean   @default(false)
@@ -158,8 +159,11 @@ model Contact {
   lastName    String?  @db.VarChar(100)
   location    String?  @db.VarChar(100)
   tags        Json?
+  notes       Json?    @default("[]")
   createdAt   DateTime @default(now()) @db.Timestamp
   optOut      Boolean  @default(false)
+  optOutAt    DateTime? @db.Timestamp
+  anonymizedAt DateTime? @db.Timestamp
 
   consents           Consent[]
   sends              Send[]

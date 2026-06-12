@@ -121,7 +121,11 @@ export class AnalyticsService {
     }
 
     const heatmapRows = await this.prisma.engagementHeatmap.findMany({
-      where: {},
+      where: {
+        campaign: {
+          accountId,
+        },
+      },
       take: 168,
     });
     const heatByHour: Record<

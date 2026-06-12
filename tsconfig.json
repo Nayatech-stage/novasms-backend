@@ -22,5 +22,12 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false,
     "types": ["node", "jest", "multer"]
-  }
+  },
+  "exclude": [
+    "**/*.spec.ts",
+    "**/*.e2e-spec.ts",
+    "dist",
+    "dist-spec",
+    "node_modules"
+  ]
 }

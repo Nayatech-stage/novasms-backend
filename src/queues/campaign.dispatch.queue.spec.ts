@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { MailService } from '../mail/mail.service';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { WhatsappProviderFactory } from '../providers/whatsapp/whatsapp.provider.factory';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
@@ -88,6 +89,7 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
       mailService,
       emailProviderFactory,
       smsProviderFactory,
+      { getProvider: jest.fn() } as unknown as WhatsappProviderFactory,
     );
 
     const response = await processor.process({
@@ -154,6 +156,7 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
         update: jest.fn().mockResolvedValue({ id: 'send-1' }),
         count: jest.fn().mockResolvedValue(0),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
     } as unknown as PrismaService;
 
     const dispatchQueue = {
@@ -180,6 +183,7 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
       mailService,
       emailProviderFactory,
       smsProviderFactory,
+      { getProvider: jest.fn() } as unknown as WhatsappProviderFactory,
     );
 
     const response = await processor.process({
@@ -209,6 +213,8 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
       S3_ENDPOINT: 'https://storage-staging.novasms.com',
       CAMPAIGN_IMAGE_BUCKET: 'campaigns',
     };
+    delete process.env.CAMPAIGN_IMAGE_PUBLIC_BASE_URL;
+    delete process.env.CAMPAIGN_IMAGE_S3_ENDPOINT;
 
     const prisma = {
       campaign: {
@@ -257,6 +263,7 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
         update: jest.fn().mockResolvedValue({ id: 'send-3' }),
         count: jest.fn().mockResolvedValue(0),
       },
+      $executeRaw: jest.fn().mockResolvedValue(1),
     } as unknown as PrismaService;
 
     const dispatchQueue = {
@@ -282,6 +289,7 @@ describe('CampaignDispatchProcessor evaluate-ab-winner', () => {
       mailService,
       emailProviderFactory,
       smsProviderFactory,
+      { getProvider: jest.fn() } as unknown as WhatsappProviderFactory,
     );
 
     const response = await processor.process({

@@ -2,8 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { SmsProvider } from './sms.provider.interface';
 import { TwilioProvider } from './twilio.provider';
 import { AfricasTalkingProvider } from './africastalking.provider';
+import { SimulationSmsProvider } from './implementations/simulation.provider';
+import { NovaSendSmsProvider } from './implementations/novasend.provider';
 
-type SmsProviderName = 'twilio' | 'africastalking';
+type SmsProviderName = 'twilio' | 'africastalking' | 'simulation' | 'novasend';
 
 type SmsProviderOverrides = Partial<Record<SmsProviderName, SmsProvider>>;
 
@@ -76,7 +78,7 @@ class SingleSmsProvider implements SmsProvider {
 export class SmsProviderFactory {
   private readonly logger = new Logger(SmsProviderFactory.name);
 
-  private isProviderConfigured(name: SmsProviderName): boolean {
+  private isRealProviderConfigured(name: SmsProviderName): boolean {
     if (name === 'twilio') {
       return (
         Boolean(process.env.TWILIO_ACCOUNT_SID) &&
@@ -84,19 +86,35 @@ export class SmsProviderFactory {
         Boolean(process.env.TWILIO_PHONE_NUMBER)
       );
     }
-
-    return (
-      Boolean(process.env.AFRICASTALKING_API_KEY) &&
-      Boolean(process.env.AFRICASTALKING_USERNAME) &&
-      Boolean(process.env.AFRICASTALKING_SENDER_ID)
-    );
+    if (name === 'africastalking') {
+      return (
+        Boolean(process.env.AFRICASTALKING_API_KEY) &&
+        Boolean(process.env.AFRICASTALKING_USERNAME) &&
+        Boolean(process.env.AFRICASTALKING_SENDER_ID)
+      );
+    }
+    if (name === 'novasend') {
+      return (
+        Boolean(process.env.NOVASEND_SMS_API_KEY) &&
+        Boolean(process.env.NOVASEND_SMS_SENDER_ID)
+      );
+    }
+    // simulation is always "configured"
+    return true;
   }
 
   private resolveProviderOrder(): {
     primary: SmsProviderName;
-    secondary: SmsProviderName;
+    secondary: SmsProviderName | null;
   } {
-    const selected = (process.env.SMS_PROVIDER || 'twilio').toLowerCase();
+    const selected = (
+      process.env.SMS_PROVIDER || 'simulation'
+    ).toLowerCase() as SmsProviderName;
+
+    // Standalone providers — pas de failover
+    if (selected === 'simulation' || selected === 'novasend') {
+      return { primary: selected, secondary: null };
+    }
 
     if (selected === 'africastalking') {
       return { primary: 'africastalking', secondary: 'twilio' };
@@ -111,6 +129,8 @@ export class SmsProviderFactory {
   ): SmsProvider {
     if (overrides?.[name]) return overrides[name];
 
+    if (name === 'simulation') return new SimulationSmsProvider();
+    if (name === 'novasend') return new NovaSendSmsProvider();
     if (name === 'africastalking') return new AfricasTalkingProvider();
     return new TwilioProvider();
   }
@@ -118,35 +138,24 @@ export class SmsProviderFactory {
   getProvider(overrides?: SmsProviderOverrides): SmsProvider {
     const { primary, secondary } = this.resolveProviderOrder();
     this.logger.log(
-      `SMS providers configured: primary=${primary}, secondary=${secondary}`,
+      `SMS provider: primary=${primary}${secondary ? `, secondary=${secondary}` : ' (no fallback)'}`,
     );
 
     const primaryProvider = this.buildProvider(primary, overrides);
-    const secondaryConfigured = this.isProviderConfigured(secondary);
-    const hasOverrides = Boolean(
-      overrides && (overrides[primary] || overrides[secondary]),
-    );
 
-    // If secondary is not configured and no override provided, fallback disabled
-    const effectiveSecondaryConfigured =
-      secondaryConfigured || Boolean(overrides && overrides[secondary]);
+    if (!secondary) {
+      return new SingleSmsProvider(primaryProvider);
+    }
 
-    if (!effectiveSecondaryConfigured && !hasOverrides) {
+    const secondaryConfigured =
+      this.isRealProviderConfigured(secondary) ||
+      Boolean(overrides && overrides[secondary]);
+
+    if (!secondaryConfigured) {
       this.logger.warn(
         `Secondary SMS provider (${secondary}) not configured, fallback disabled`,
       );
       return new SingleSmsProvider(primaryProvider);
-    }
-
-    if (!effectiveSecondaryConfigured) {
-      // secondary override exists — use failover with override
-      return new FailoverSmsProvider(
-        primaryProvider,
-        this.buildProvider(secondary, overrides),
-        this.logger,
-        primary,
-        secondary,
-      );
     }
 
     return new FailoverSmsProvider(
@@ -164,8 +173,9 @@ export class SmsProviderFactory {
     return {
       providerType: 'sms',
       primary,
-      secondary,
+      secondary: secondary ?? null,
       config: {
+        simulationActive: primary === 'simulation',
         twilioConfigured:
           Boolean(process.env.TWILIO_ACCOUNT_SID) &&
           Boolean(process.env.TWILIO_AUTH_TOKEN) &&
@@ -174,7 +184,12 @@ export class SmsProviderFactory {
           Boolean(process.env.AFRICASTALKING_API_KEY) &&
           Boolean(process.env.AFRICASTALKING_USERNAME) &&
           Boolean(process.env.AFRICASTALKING_SENDER_ID),
-        fallbackEnabled: this.isProviderConfigured(secondary),
+        novasendConfigured:
+          Boolean(process.env.NOVASEND_SMS_API_KEY) &&
+          Boolean(process.env.NOVASEND_SMS_SENDER_ID),
+        fallbackEnabled: secondary
+          ? this.isRealProviderConfigured(secondary)
+          : false,
       },
     };
   }

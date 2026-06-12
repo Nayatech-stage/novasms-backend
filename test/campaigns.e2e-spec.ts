@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unused-vars, @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * E2E Test: Campaign Complete Workflow
  * Tests: Channel Selection → Content Editor → Audience → Scheduling → Send

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-argument */
 import {
   BadRequestException,
   ConflictException,
@@ -10,6 +9,7 @@ import {
   AutomationStatus,
   CampaignStatus,
   Contact,
+  Prisma,
   Segment,
 } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -57,8 +57,8 @@ export class ContactsService {
   createAuditLog(
     accountId: string,
     action: string,
-    details: any,
-  ): Promise<any> {
+    details: Prisma.InputJsonValue,
+  ): Promise<unknown> {
     return this.prisma.auditLog.create({
       data: { accountId, action, details },
     });
@@ -68,13 +68,13 @@ export class ContactsService {
     accountId: string,
     logic: SegmentLogic,
     criteria: SegmentCriterion[],
-  ): any {
-    const where: any = { accountId };
-    const conditions: any[] = [];
+  ): Prisma.ContactWhereInput {
+    const where: Prisma.ContactWhereInput = { accountId };
+    const conditions: Prisma.ContactWhereInput[] = [];
 
     for (const c of criteria) {
       if (!c.field || !c.operator || c.value === undefined) continue;
-      let cond: any = {};
+      let cond: Prisma.ContactWhereInput = {};
 
       // tags est Json? → les opérateurs varient selon le type de recherche
       if (c.field === 'tag') {
@@ -112,7 +112,7 @@ export class ContactsService {
     return { ...where, [prismaLogic]: conditions };
   }
 
-  public normalizeSegmentCriteria(raw: any): {
+  public normalizeSegmentCriteria(raw: unknown): {
     logic: SegmentLogic;
     rules: SegmentCriterion[];
   } {
@@ -121,7 +121,8 @@ export class ContactsService {
       rules: [] as SegmentCriterion[],
     };
     if (!raw || typeof raw !== 'object') return fallback;
-    const logic = raw.logic === 'OR' ? 'OR' : 'AND';
+    const rawObj = raw as { logic?: unknown; rules?: unknown };
+    const logic = rawObj.logic === 'OR' ? 'OR' : 'AND';
     const validFields = [
       'tag',
       'status',
@@ -144,14 +145,16 @@ export class ContactsService {
       'notIn',
       'notEquals',
     ];
-    const rules = Array.isArray(raw.rules)
-      ? raw.rules
-          .map((r: any) => {
+    const rules = Array.isArray(rawObj.rules)
+      ? (rawObj.rules as Record<string, unknown>[])
+          .map((r) => {
             if (!r || typeof r !== 'object') return null;
-            const field = validFields.includes(r.field) ? r.field : null;
+            const field = validFields.includes(r.field as string)
+              ? (r.field as string)
+              : null;
             if (!field) return null;
-            const operator = validOps.includes(r.operator)
-              ? r.operator
+            const operator = validOps.includes(r.operator as string)
+              ? (r.operator as string)
               : 'equals';
             const value =
               ['string', 'number'].includes(typeof r.value) ||
@@ -167,7 +170,15 @@ export class ContactsService {
 
   async findAll(
     accountId: string,
-    params: any,
+    params: {
+      limit?: number;
+      cursor?: string;
+      search?: string;
+      location?: string;
+      tag?: string;
+      dateAddedFrom?: string;
+      dateAddedTo?: string;
+    },
   ): Promise<{
     data: Contact[];
     nextCursor: string | null;
@@ -180,7 +191,7 @@ export class ContactsService {
       !params.tag &&
       !params.dateAddedFrom &&
       !params.dateAddedTo;
-    const where: any = { accountId };
+    const where: Prisma.ContactWhereInput = { accountId };
     if (params.search) {
       where.OR = [
         { firstName: { contains: params.search, mode: 'insensitive' } },
@@ -238,7 +249,12 @@ export class ContactsService {
     return this.prisma.contact.findFirst({ where: { id, accountId } });
   }
 
-  async create(accountId: string, data: any): Promise<Contact> {
+  async create(
+    accountId: string,
+    data: Omit<Prisma.ContactUncheckedCreateInput, 'accountId'> & {
+      tags?: Prisma.InputJsonValue;
+    },
+  ): Promise<Contact> {
     try {
       const c = await this.prisma.contact.create({
         data: {
@@ -262,7 +278,7 @@ export class ContactsService {
     } catch (err: unknown) {
       // Handle unique constraint violations: return existing contact instead of error
       // Prisma unique constraint code is P2002
-      const maybe = err as any;
+      const maybe = err as { code?: string };
       if (maybe && maybe.code === 'P2002') {
         // Try to find existing contact by email or phone
         if (data.email) {
@@ -294,13 +310,13 @@ export class ContactsService {
   async update(
     accountId: string,
     id: string,
-    data: any,
+    data: Partial<Prisma.ContactUncheckedUpdateInput>,
   ): Promise<Contact | null> {
     const existing = await this.prisma.contact.findFirst({
       where: { id, accountId },
     });
     if (!existing) return null;
-    const payload: any = {};
+    const payload: Prisma.ContactUncheckedUpdateInput = {};
     if (data.firstName !== undefined) payload.firstName = data.firstName;
     if (data.lastName !== undefined) payload.lastName = data.lastName;
     if (data.email !== undefined) payload.email = data.email;
@@ -328,7 +344,7 @@ export class ContactsService {
     if (!contact) return null;
     const updated = await this.prisma.contact.update({
       where: { id },
-      data: { optOut: true },
+      data: { optOut: true, optOutAt: new Date() },
     });
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
@@ -478,8 +494,9 @@ export class ContactsService {
         // Ignore cache write errors
       }
       return { count };
-    } catch (error: any) {
-      this.logger.error('previewSegment failed: ' + error.message, error.stack);
+    } catch (error) {
+      const e = error instanceof Error ? error : new Error(String(error));
+      this.logger.error('previewSegment failed: ' + e.message, e.stack);
       return { count: 0 }; // ✅ Retourner 0 au lieu de crasher
     }
   }
@@ -908,6 +925,35 @@ export class ContactsService {
       );
       return [];
     }
+  }
+
+  async addNote(
+    accountId: string,
+    contactId: string,
+    content: string,
+  ): Promise<{ id: string; content: string; createdAt: string }[]> {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, accountId },
+    });
+    if (!contact) throw new NotFoundException('Contact introuvable');
+
+    const noteId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const newNote = { id: noteId, content, createdAt: now };
+
+    await this.prisma.$executeRaw`
+      UPDATE contacts
+      SET notes = COALESCE(notes, '[]'::jsonb) || ${JSON.stringify([newNote])}::jsonb
+      WHERE id = ${contactId}::uuid AND "accountId" = ${accountId}
+    `;
+
+    const rows = await this.prisma.$queryRaw<{ notes: unknown }[]>`
+      SELECT notes FROM contacts WHERE id = ${contactId}::uuid
+    `;
+    const notes = rows[0]?.notes;
+    return Array.isArray(notes)
+      ? (notes as { id: string; content: string; createdAt: string }[])
+      : [newNote];
   }
 
   private async invalidateContactCountCache(accountId: string) {

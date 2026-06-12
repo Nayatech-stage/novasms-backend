@@ -8,6 +8,7 @@ import {
   Request,
   Query,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -21,8 +22,72 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { MobileMoneyService } from './mobile-money.service';
 import type { Request as ExpressRequest } from 'express';
 
+type OperatorKey = 'WAVE' | 'ORANGE' | 'MOMO' | 'MOOV';
+
+const OPERATOR_RULES: Record<
+  OperatorKey,
+  { min: number; max: number; prefixes: string[] }
+> = {
+  WAVE: { min: 500, max: 500_000, prefixes: ['01', '05', '07', '27'] },
+  ORANGE: {
+    min: 500,
+    max: 300_000,
+    prefixes: [
+      '05',
+      '07',
+      '25',
+      '45',
+      '47',
+      '57',
+      '65',
+      '67',
+      '77',
+      '87',
+      '97',
+    ],
+  },
+  MOMO: { min: 500, max: 500_000, prefixes: ['05', '25', '45', '65'] },
+  MOOV: { min: 500, max: 300_000, prefixes: ['01', '41', '61'] },
+};
+
+function validatePayment(
+  operator: string,
+  phoneNumber: string,
+  amount: number,
+): void {
+  // Amount bounds
+  const rules = OPERATOR_RULES[operator as OperatorKey];
+  const min = rules?.min ?? 500;
+  const max = rules?.max ?? 1_000_000;
+  if (amount < min) {
+    throw new BadRequestException(`Amount minimum for ${operator}: ${min} XOF`);
+  }
+  if (amount > max) {
+    throw new BadRequestException(`Amount maximum for ${operator}: ${max} XOF`);
+  }
+
+  // Phone format — CI only (skip for NOVASEND)
+  if (!rules) return;
+  const digits = phoneNumber.replace(/\D/g, '');
+  const local = digits.startsWith('225') ? digits.slice(3) : digits;
+  if (local.length !== 10) {
+    throw new BadRequestException(
+      'Phone must be 10 digits (CI format: +225 07 XX XX XX XX)',
+    );
+  }
+  const prefix = local.slice(0, 2);
+  if (!rules.prefixes.includes(prefix)) {
+    throw new BadRequestException(
+      `Phone prefix ${prefix} does not match operator ${operator}. Expected: ${rules.prefixes.join(', ')}`,
+    );
+  }
+}
+
 // Type étendu pour accéder à accountId injecté par TenantInterceptor
-type TenantRequest = ExpressRequest & { accountId?: string };
+type TenantRequest = ExpressRequest & {
+  accountId?: string;
+  user?: { accountId?: string; email?: string };
+};
 
 @ApiTags('Mobile Money')
 @Controller('mobile-money')
@@ -38,11 +103,14 @@ export class MobileMoneyController {
   async initiateTransaction(
     @Body()
     body: {
-      operator: 'ORANGE' | 'MTN';
+      operator: 'WAVE' | 'ORANGE' | 'MOMO' | 'MOOV';
       phoneNumber: string;
       amount: number;
       currency?: string;
       description?: string;
+      otp?: string; // Orange Money : code via #144*82#
+      country?: string; // ISO : CI | CM (defaut CI)
+      customerName?: string;
     },
     @Request() req: TenantRequest,
   ) {
@@ -54,8 +122,7 @@ export class MobileMoneyController {
       );
     }
 
-    // userId peut être extrait de req.user ou accountId - utilisons juste accountId
-    const userId = accountId;
+    const userId = req.user?.accountId ?? accountId;
 
     const {
       operator,
@@ -63,24 +130,65 @@ export class MobileMoneyController {
       amount,
       currency = 'XOF',
       description = 'Recharge crédit NovaSMS',
+      otp,
+      country = 'CI',
+      customerName,
     } = body;
 
+    // Validate phone format and amount bounds before hitting the provider
+    validatePayment(operator, phoneNumber, amount);
+
+    // Orange Money requires an OTP
+    if (operator === 'ORANGE') {
+      if (!otp || !/^\d{4}$/.test(otp)) {
+        throw new BadRequestException(
+          'Orange Money requires a 4-digit OTP (dial #144*82# to get it)',
+        );
+      }
+    }
+
     const transaction = await this.mobileMoneyService.initiateTransaction({
-      userId: String(userId), // Conversion en string
-      accountId: String(accountId), // Conversion en string
+      userId: String(userId),
+      userEmail: req.user?.email,
+      accountId: String(accountId),
       operator,
       phoneNumber,
       amount,
       currency,
       description,
+      otp,
+      country,
+      customerName,
     });
+
+    const messages: Record<string, string> = {
+      WAVE: 'Ouvrez votre application Wave pour confirmer le paiement.',
+      ORANGE: 'Paiement Orange Money en cours de traitement.',
+      MOMO: 'Confirmez le paiement via votre application MTN MoMo ou composez *133#.',
+      MOOV: 'Confirmez le paiement via Moov Money ou composez *155#.',
+    };
 
     return {
       success: true,
       transactionId: transaction.id,
-      message: `Transaction initiée avec succès. Veuillez confirmer via votre application ${operator}.`,
+      paymentUrl: transaction.paymentUrl ?? null,
+      reference: transaction.reference ?? null,
+      message: messages[operator] ?? `Transaction initiée avec succès.`,
       transaction,
     };
+  }
+
+  @Get(':id/status')
+  @ApiParam({ name: 'id', description: 'ID interne de la transaction' })
+  @ApiOperation({ summary: 'Polling du statut de paiement — RG-48' })
+  async pollStatus(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    const result = await this.mobileMoneyService.pollTransactionStatus(
+      id,
+      String(accountId),
+    );
+    return { success: true, ...result };
   }
 
   @Post(':id/confirm')

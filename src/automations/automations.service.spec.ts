@@ -1,4 +1,10 @@
+import { Queue } from 'bullmq';
 import { AutomationsService } from './automations.service';
+import { ContactsService } from '../contacts/contacts.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { EmailProviderFactory } from '../providers/email/email.provider.factory';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
+import { WhatsappProviderFactory } from '../providers/whatsapp/whatsapp.provider.factory';
 
 describe('AutomationsService (unit)', () => {
   it('schedules execution when triggerAutomationForContact is called', async () => {
@@ -38,9 +44,6 @@ describe('AutomationsService (unit)', () => {
   });
 });
 const { AutomationStatus } = require('@prisma/client');
-const {
-  AutomationsService,
-} = require('../../dist/src/automations/automations.service');
 
 describe('AutomationsService', () => {
   const queue = {
@@ -77,6 +80,7 @@ describe('AutomationsService', () => {
       create: jest.fn(),
     },
     $transaction: jest.fn(async (operations) => Promise.all(operations)),
+    $executeRaw: jest.fn().mockResolvedValue(1),
   };
 
   const emailSend = jest.fn();
@@ -96,20 +100,19 @@ describe('AutomationsService', () => {
     })),
   };
 
-  let service;
+  let service: AutomationsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     emailSend.mockResolvedValue({ success: true });
     smsSend.mockResolvedValue({ success: true });
     service = new AutomationsService(
-      prisma,
-      {} /* contactsService mock */,
-      emailProviderFactory,
-      smsProviderFactory,
-      // pass whatsapp factory and queue to match constructor
-      whatsappProviderFactory,
-      queue,
+      prisma as unknown as PrismaService,
+      {} as unknown as ContactsService,
+      emailProviderFactory as unknown as EmailProviderFactory,
+      smsProviderFactory as unknown as SmsProviderFactory,
+      whatsappProviderFactory as unknown as WhatsappProviderFactory,
+      queue as unknown as Queue,
     );
   });
 
@@ -515,6 +518,155 @@ describe('AutomationsService', () => {
       data: { tags: ['Lead chaud'] },
     });
   });
+  // ── deductAutomationCredit ────────────────────────────────────────────────
+
+  it('deduit 1 FCFA par defaut apres envoi email automation (credit_balance update)', async () => {
+    prisma.workflowExecution.findFirst.mockResolvedValue({
+      id: 'exec-credit-email',
+      status: 'Running',
+      automation: {
+        id: 'auto-credit',
+        accountId: 'acc-credit',
+        name: 'Bienvenue credit',
+        trigger: 'contact_added',
+        delaySeconds: 0,
+        channel: 'Email',
+        templateId: null,
+        status: AutomationStatus.Active,
+        sendCount: 0,
+        template: { htmlContent: '<p>Hello {{firstName}}</p>' },
+      },
+      contact: {
+        id: 'contact-credit',
+        accountId: 'acc-credit',
+        email: 'credit@example.com',
+        phone: null,
+        firstName: 'Credit',
+        lastName: 'User',
+        tags: [],
+      },
+    });
+    prisma.automation.update.mockResolvedValue({ id: 'auto-credit' });
+    prisma.workflowExecution.update.mockResolvedValue({
+      id: 'exec-credit-email',
+    });
+    prisma.$executeRaw.mockClear();
+    delete process.env.CREDIT_COST_PER_EMAIL;
+
+    await service.executeQueuedAutomation({
+      automationId: 'auto-credit',
+      executionId: 'exec-credit-email',
+      contactId: 'contact-credit',
+    });
+
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    // tagged template: args are (strings[], cost, accountId, cost)
+    expect(prisma.$executeRaw).toHaveBeenCalledWith(
+      expect.any(Array),
+      1, // CREDIT_COST_PER_EMAIL par defaut = 1 FCFA
+      'acc-credit',
+      1,
+    );
+  });
+
+  it('deduit 5 FCFA par defaut apres envoi SMS automation', async () => {
+    smsSend.mockResolvedValue({ success: true, messageId: 'sms-credit-1' });
+    prisma.workflowExecution.findFirst.mockResolvedValue({
+      id: 'exec-credit-sms',
+      status: 'Running',
+      automation: {
+        id: 'auto-sms-credit',
+        accountId: 'acc-sms',
+        name: 'SMS credit',
+        trigger: 'contact_added',
+        delaySeconds: 0,
+        channel: 'SMS',
+        templateId: null,
+        status: AutomationStatus.Active,
+        sendCount: 0,
+        template: { htmlContent: 'Bonjour {{firstName}}' },
+      },
+      contact: {
+        id: 'contact-sms-credit',
+        accountId: 'acc-sms',
+        email: null,
+        phone: '+22507000099',
+        firstName: 'Konan',
+        lastName: 'Test',
+        tags: [],
+      },
+    });
+    prisma.automation.update.mockResolvedValue({ id: 'auto-sms-credit' });
+    prisma.workflowExecution.update.mockResolvedValue({
+      id: 'exec-credit-sms',
+    });
+    prisma.$executeRaw.mockClear();
+    delete process.env.CREDIT_COST_PER_SMS;
+
+    await service.executeQueuedAutomation({
+      automationId: 'auto-sms-credit',
+      executionId: 'exec-credit-sms',
+      contactId: 'contact-sms-credit',
+    });
+
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(prisma.$executeRaw).toHaveBeenCalledWith(
+      expect.any(Array),
+      5, // CREDIT_COST_PER_SMS par defaut = 5 FCFA
+      'acc-sms',
+      5,
+    );
+  });
+
+  it('respecte CREDIT_COST_PER_EMAIL depuis .env (override)', async () => {
+    process.env.CREDIT_COST_PER_EMAIL = '2';
+    prisma.workflowExecution.findFirst.mockResolvedValue({
+      id: 'exec-env-override',
+      status: 'Running',
+      automation: {
+        id: 'auto-env',
+        accountId: 'acc-env',
+        name: 'Env override',
+        trigger: 'contact_added',
+        delaySeconds: 0,
+        channel: 'Email',
+        templateId: null,
+        status: AutomationStatus.Active,
+        sendCount: 0,
+        template: { htmlContent: '<p>Hi {{firstName}}</p>' },
+      },
+      contact: {
+        id: 'contact-env',
+        accountId: 'acc-env',
+        email: 'env@example.com',
+        phone: null,
+        firstName: 'Env',
+        lastName: 'Override',
+        tags: [],
+      },
+    });
+    prisma.automation.update.mockResolvedValue({ id: 'auto-env' });
+    prisma.workflowExecution.update.mockResolvedValue({
+      id: 'exec-env-override',
+    });
+    prisma.$executeRaw.mockClear();
+
+    await service.executeQueuedAutomation({
+      automationId: 'auto-env',
+      executionId: 'exec-env-override',
+      contactId: 'contact-env',
+    });
+
+    expect(prisma.$executeRaw).toHaveBeenCalledWith(
+      expect.any(Array),
+      2, // overridden to 2 FCFA via CREDIT_COST_PER_EMAIL=2
+      'acc-env',
+      2,
+    );
+
+    delete process.env.CREDIT_COST_PER_EMAIL;
+  });
+
   afterAll(async () => {
     try {
       const queueModule = require('../../dist/src/queues/import.queue');
@@ -523,7 +675,7 @@ describe('AutomationsService', () => {
         typeof queueModule.importWorker.close === 'function'
       ) {
         // close worker if initialized
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+
         await queueModule.importWorker.close();
       }
       if (
@@ -531,7 +683,7 @@ describe('AutomationsService', () => {
         typeof queueModule.importQueue.close === 'function'
       ) {
         // close queue connection
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+
         await queueModule.importQueue.close();
       }
       if (queueModule.redisConnection) {

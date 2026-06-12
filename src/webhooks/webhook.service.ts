@@ -326,7 +326,7 @@ export class WebhookService {
     if (isHardBounce || isComplaint) {
       await this.prisma.contact.update({
         where: { id: contact.id },
-        data: { optOut: true },
+        data: { optOut: true, optOutAt: new Date() },
       });
     }
 
@@ -367,6 +367,9 @@ export class WebhookService {
         id: true,
         campaignId: true,
         contactId: true,
+        status: true,
+        openedAt: true,
+        clickedAt: true,
         campaign: { select: { accountId: true } },
       },
     });
@@ -379,80 +382,94 @@ export class WebhookService {
     const event = eventType.toLowerCase();
 
     if (event.includes('open')) {
-      await this.prisma.send.updateMany({
+      const result = await this.prisma.send.updateMany({
         where: { id: sendId, openedAt: null },
-        data: { openedAt: now, status: SendStatus.OPENED },
-      });
-      await this.prisma.campaign.update({
-        where: { id: send.campaignId },
-        data: { openedCount: { increment: 1 } },
-      });
-      await this.prisma.analytic.create({
         data: {
-          campaignId: send.campaignId,
-          contactId: send.contactId,
-          action: AnalyticAction.Open,
-          createdAt: now,
+          openedAt: now,
+          status:
+            send.status === SendStatus.CLICKED
+              ? SendStatus.CLICKED
+              : SendStatus.OPENED,
         },
       });
+      if (result.count > 0) {
+        await this.prisma.campaign.update({
+          where: { id: send.campaignId },
+          data: { openedCount: { increment: 1 } },
+        });
+        await this.prisma.analytic.create({
+          data: {
+            campaignId: send.campaignId,
+            contactId: send.contactId,
+            action: AnalyticAction.Open,
+            createdAt: now,
+          },
+        });
+      }
     } else if (event.includes('click')) {
-      await this.prisma.send.updateMany({
+      const result = await this.prisma.send.updateMany({
         where: { id: sendId, clickedAt: null },
         data: { clickedAt: now, status: SendStatus.CLICKED },
       });
-      await this.prisma.campaign.update({
-        where: { id: send.campaignId },
-        data: { clickedCount: { increment: 1 } },
-      });
-      await this.prisma.analytic.create({
-        data: {
-          campaignId: send.campaignId,
-          contactId: send.contactId,
-          action: AnalyticAction.Click,
-          createdAt: now,
-        },
-      });
+      if (result.count > 0) {
+        await this.prisma.campaign.update({
+          where: { id: send.campaignId },
+          data: { clickedCount: { increment: 1 } },
+        });
+        await this.prisma.analytic.create({
+          data: {
+            campaignId: send.campaignId,
+            contactId: send.contactId,
+            action: AnalyticAction.Click,
+            createdAt: now,
+          },
+        });
+      }
     } else if (
       event.includes('bounce') ||
       event.includes('complain') ||
       event.includes('spam')
     ) {
-      await this.prisma.send.updateMany({
-        where: { id: sendId },
+      const result = await this.prisma.send.updateMany({
+        where: { id: sendId, status: { not: SendStatus.BOUNCED } },
         data: {
           status: SendStatus.BOUNCED,
           bouncedReason: eventType,
         },
       });
-      await this.prisma.campaign.update({
-        where: { id: send.campaignId },
-        data: { failedCount: { increment: 1 } },
-      });
-      await this.prisma.analytic.create({
-        data: {
-          campaignId: send.campaignId,
-          contactId: send.contactId,
-          action: AnalyticAction.Bounce,
-          createdAt: now,
-        },
-      });
+      if (result.count > 0) {
+        await this.prisma.campaign.update({
+          where: { id: send.campaignId },
+          data: { failedCount: { increment: 1 } },
+        });
+        await this.prisma.analytic.create({
+          data: {
+            campaignId: send.campaignId,
+            contactId: send.contactId,
+            action: AnalyticAction.Bounce,
+            createdAt: now,
+          },
+        });
+      }
     } else if (event.includes('unsubscribe')) {
       await this.prisma.contact.updateMany({
         where: { id: send.contactId },
-        data: { optOut: true },
+        data: { optOut: true, optOutAt: new Date() },
       });
-      await this.prisma.send.updateMany({
-        where: { id: sendId },
+      const result = await this.prisma.send.updateMany({
+        where: { id: sendId, status: { not: SendStatus.UNSUBSCRIBED } },
         data: { status: SendStatus.UNSUBSCRIBED },
       });
-      await this.prisma.analytic.create({
-        data: {
-          campaignId: send.campaignId,
-          contactId: send.contactId,
-          action: AnalyticAction.Unsubscribe,
-          createdAt: now,
-        },
-      });
+      if (result.count > 0) {
+        await this.prisma.analytic.create({
+          data: {
+            campaignId: send.campaignId,
+            contactId: send.contactId,
+            action: AnalyticAction.Unsubscribe,
+            createdAt: now,
+          },
+        });
+      }
     }
 
     await this.prisma.auditLog.create({
@@ -510,7 +527,7 @@ export class WebhookService {
         if (isStop) {
           await tx.contact.update({
             where: { id: contact.id },
-            data: { optOut: true },
+            data: { optOut: true, optOutAt: new Date() },
           });
 
           await tx.send.updateMany({

@@ -83,7 +83,7 @@ export class SegmentRecalculationProcessor extends WorkerHost {
       );
 
       // Build the where clause with tenant isolation
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       const where = this.contactsService.buildWhereForSegment(
         accountId,
         parsed.logic,
@@ -91,7 +91,7 @@ export class SegmentRecalculationProcessor extends WorkerHost {
       );
 
       // Count matching contacts
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       const count = await this.prisma.contact.count({ where });
 
       // Update the segment with the new count
@@ -145,7 +145,7 @@ export class SegmentRecalculationProcessor extends WorkerHost {
           );
 
           // Build the where clause with tenant isolation
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
           const where = this.contactsService.buildWhereForSegment(
             accountId,
             parsed.logic,
@@ -153,7 +153,7 @@ export class SegmentRecalculationProcessor extends WorkerHost {
           );
 
           // Count matching contacts
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
           const count = await this.prisma.contact.count({ where });
 
           // Update the segment with the new count

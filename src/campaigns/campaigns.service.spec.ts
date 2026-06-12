@@ -1,5 +1,8 @@
 import { CampaignStatus, SendVariant } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { CampaignsService } from './campaigns.service';
+import { ContactsService } from '../contacts/contacts.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('CampaignsService A/B flow', () => {
   const previousTestRecipient = process.env.RESEND_TEST_RECIPIENT;
@@ -65,10 +68,10 @@ describe('CampaignsService A/B flow', () => {
     };
 
     const service = new CampaignsService(
-      prisma,
-      contactsService,
-      dispatchQueue,
-      scheduleQueue,
+      prisma as unknown as PrismaService,
+      contactsService as unknown as ContactsService,
+      dispatchQueue as unknown as Queue,
+      scheduleQueue as unknown as Queue,
     );
 
     const result = await service.sendCampaign('acc-1', 'camp-1', {
@@ -127,5 +130,4 @@ describe('CampaignsService A/B flow', () => {
 
     expect(scheduleQueue.add).not.toHaveBeenCalled();
   });
-
 });

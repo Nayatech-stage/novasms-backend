@@ -6,7 +6,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AutomationStatus, Prisma } from '@prisma/client';
+import {
+  AnalyticAction,
+  AutomationStatus,
+  Contact,
+  Prisma,
+} from '@prisma/client';
 import { Queue } from 'bullmq';
 import { EmailProviderFactory } from '../providers/email/email.provider.factory';
 import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
@@ -55,6 +60,23 @@ type WorkflowNode = {
   nextTrue?: string | null;
   nextFalse?: string | null;
 };
+
+type RawWorkflowInput = {
+  nodes?:
+    | Array<Partial<WorkflowNode> & { id?: string }>
+    | Record<string, Partial<WorkflowNode> & { id?: string }>;
+  edges?: Array<{ from?: string; to?: string; fromPort?: string }>;
+  startNodeId?: string | null;
+};
+
+type ExecutionWithRelations = Prisma.WorkflowExecutionGetPayload<{
+  include: {
+    automation: {
+      include: { template: true; campaign: { include: { account: true } } };
+    };
+    contact: true;
+  };
+}>;
 
 type NormalizedWorkflow = {
   nodes: Record<string, WorkflowNode>;
@@ -714,7 +736,7 @@ export class AutomationsService {
           include: {
             template: true,
             // include campaign with account so renderers can use companyName
-            campaign: { include: { account: true } as any },
+            campaign: { include: { account: true } },
           },
         },
         contact: true,
@@ -730,17 +752,21 @@ export class AutomationsService {
     }
 
     // If automation contains a workflow definition, process it via the workflow engine.
-    const workflow = (execution.automation as any).workflow;
+    const workflow = execution.automation.workflow;
     if (workflow && typeof workflow === 'object') {
       return this.processWorkflowExecution(
         execution,
-        workflow,
-        execution.contact as any,
+        workflow as RawWorkflowInput,
+        execution.contact,
       );
     }
 
     // fallback: simple send (legacy behaviour)
     await this.sendAutomationMessage(execution.automation, execution.contact);
+    await this.deductAutomationCredit(
+      execution.automation.accountId,
+      execution.automation.channel,
+    );
 
     await this.prisma.$transaction([
       this.prisma.automation.update({
@@ -765,9 +791,9 @@ export class AutomationsService {
   }
 
   private async processWorkflowExecution(
-    execution: any,
-    workflow: any,
-    contact: any,
+    execution: ExecutionWithRelations,
+    workflow: RawWorkflowInput,
+    contact: Contact,
   ) {
     const normalized = this.normalizeWorkflow(workflow);
     const nodes = normalized.nodes;
@@ -797,6 +823,10 @@ export class AutomationsService {
         case 'action':
           try {
             await this.sendAutomationMessage(execution.automation, contact);
+            await this.deductAutomationCredit(
+              execution.automation.accountId,
+              execution.automation.channel,
+            );
             await this.prisma.automation.update({
               where: { id: execution.automation.id },
               data: { sendCount: { increment: 1 } },
@@ -864,15 +894,15 @@ export class AutomationsService {
           try {
             const tag = this.getWorkflowTag(node);
             if (tag) {
-              const existing = Array.isArray(contact.tags)
-                ? contact.tags
-                : contact.tags
-                  ? contact.tags
-                  : [];
+              const existing: string[] = Array.isArray(contact.tags)
+                ? contact.tags.filter(
+                    (entry): entry is string => typeof entry === 'string',
+                  )
+                : [];
               const tagMode = this.getWorkflowTagMode(node);
               const nextTags =
                 tagMode === 'remove'
-                  ? existing.filter((entry: string) => entry !== tag)
+                  ? existing.filter((entry) => entry !== tag)
                   : Array.from(new Set([...existing, tag]));
               await this.prisma.contact.update({
                 where: { id: contact.id },
@@ -894,7 +924,7 @@ export class AutomationsService {
           );
 
           currentNodeId = conditionResult
-            ? node.nextTrue || node.next
+            ? node.nextTrue || node.next || null
             : node.nextFalse || null;
           break;
         }
@@ -1009,7 +1039,9 @@ export class AutomationsService {
     return 'unknown';
   }
 
-  private normalizeWorkflow(workflow: any): NormalizedWorkflow {
+  private normalizeWorkflow(
+    workflow: RawWorkflowInput | null | undefined,
+  ): NormalizedWorkflow {
     const rawNodes = Array.isArray(workflow?.nodes)
       ? workflow.nodes
       : workflow?.nodes && typeof workflow.nodes === 'object'
@@ -1052,8 +1084,8 @@ export class AutomationsService {
     for (const node of Object.values(nodes)) {
       const nextNodes = outgoing.get(node.id) || [];
       if (this.normalizeNodeType(node.type) === 'condition') {
-        const right = nextNodes.find((edge: any) => edge.fromPort === 'right');
-        const left = nextNodes.find((edge: any) => edge.fromPort === 'left');
+        const right = nextNodes.find((edge) => edge.fromPort === 'right');
+        const left = nextNodes.find((edge) => edge.fromPort === 'left');
         node.nextTrue = node.nextTrue || right?.to || nextNodes[0]?.to || null;
         node.nextFalse = node.nextFalse || left?.to || nextNodes[1]?.to || null;
       } else if (!node.next) {
@@ -1083,9 +1115,9 @@ export class AutomationsService {
   }
 
   private async evaluateWorkflowCondition(
-    execution: any,
+    execution: { automation?: { campaignId?: string | null } },
     node: WorkflowNode,
-    contact: any,
+    contact: Contact,
   ): Promise<boolean> {
     const config = node.config || {};
     const conditionType = config.conditionType || 'field';
@@ -1097,9 +1129,10 @@ export class AutomationsService {
     }
 
     if (conditionType === 'purchase') {
-      const lastPurchaseDate = contact.lastPurchaseDate;
+      const lastPurchaseDate = (contact as Record<string, unknown>)
+        .lastPurchaseDate;
       if (!lastPurchaseDate) return false;
-      const parsed = new Date(lastPurchaseDate);
+      const parsed = new Date(lastPurchaseDate as string);
       return !Number.isNaN(parsed.getTime());
     }
 
@@ -1111,8 +1144,8 @@ export class AutomationsService {
         where: {
           contactId: contact.id,
           ...(campaignId ? { campaignId } : {}),
-          action,
-        } as any,
+          action: action as AnalyticAction,
+        },
       });
       return count > 0;
     }
@@ -1123,7 +1156,7 @@ export class AutomationsService {
 
     if (!field) return false;
 
-    const fieldValue = contact[field];
+    const fieldValue = (contact as Record<string, unknown>)[field];
 
     switch (operator) {
       case 'exists':
@@ -1400,5 +1433,48 @@ export class AutomationsService {
       .replace(/<[^>]*>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  /**
+   * Déduit le coût d'un envoi automation du solde du compte.
+   * Défauts : SMS=5 FCFA, Email=1 FCFA, WhatsApp=10 FCFA.
+   * Atomique — empêche le solde négatif.
+   */
+  private async deductAutomationCredit(
+    accountId: string,
+    channel: string,
+  ): Promise<void> {
+    const defaultCosts: Record<string, number> = {
+      SMS: 5,
+      Email: 1,
+      WhatsApp: 10,
+    };
+    const envKey =
+      channel === 'SMS'
+        ? 'CREDIT_COST_PER_SMS'
+        : channel === 'Email'
+          ? 'CREDIT_COST_PER_EMAIL'
+          : channel === 'WhatsApp'
+            ? 'CREDIT_COST_PER_WHATSAPP'
+            : null;
+
+    const cost = envKey
+      ? parseFloat(process.env[envKey] || String(defaultCosts[channel] ?? 0))
+      : (defaultCosts[channel] ?? 0);
+
+    if (cost <= 0) return;
+
+    const result = await this.prisma.$executeRaw`
+      UPDATE accounts
+      SET    credit_balance = credit_balance - ${cost}::decimal
+      WHERE  id = ${accountId}::uuid
+      AND    credit_balance >= ${cost}::decimal
+    `;
+
+    if (result === 0) {
+      this.logger.warn(
+        `Account ${accountId}: solde insuffisant pour déduire ${cost} FCFA (automation ${channel}).`,
+      );
+    }
   }
 }

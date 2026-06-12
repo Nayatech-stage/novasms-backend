@@ -210,7 +210,9 @@ describe('ContactsService -- US-004, US-006', () => {
       expect(result).toBeDefined();
       expect(result?.optOut).toBe(true);
       expect(mockPrisma.contact.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { optOut: true } }),
+        expect.objectContaining({
+          data: expect.objectContaining({ optOut: true }),
+        }),
       );
     });
 

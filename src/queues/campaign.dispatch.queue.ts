@@ -954,14 +954,17 @@ export class CampaignDispatchProcessor extends WorkerHost {
     const estCost = Number(campaign.estimatedCost ?? 0);
     const estRecipients = campaign.estimatedRecipients || 0;
 
+    const defaultCosts: Record<string, number> = { SMS: 5, EMAIL: 1 };
+
     if (estCost > 0 && estRecipients > 0) {
       costPerSend = estCost / estRecipients;
     } else {
+      const channelKey = campaign.channelType.toUpperCase();
       const envKey =
-        campaign.channelType === 'SMS'
-          ? 'CREDIT_COST_PER_SMS'
-          : 'CREDIT_COST_PER_EMAIL';
-      costPerSend = parseFloat(process.env[envKey] || '0');
+        channelKey === 'SMS' ? 'CREDIT_COST_PER_SMS' : 'CREDIT_COST_PER_EMAIL';
+      costPerSend = parseFloat(
+        process.env[envKey] || String(defaultCosts[channelKey] ?? 0),
+      );
     }
 
     if (costPerSend <= 0) return;

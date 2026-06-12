@@ -1,7 +1,9 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
+import { Logger } from '@nestjs/common';
 import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { ImportService } from '../contacts/import.service';
+
+const logger = new Logger('ImportQueue');
 
 // In test environment we avoid creating real Redis connections and workers
 // to prevent open handles and noisy logs during Jest runs.
@@ -9,23 +11,40 @@ const isTest =
   process.env.NODE_ENV === 'test' ||
   typeof process.env.JEST_WORKER_ID !== 'undefined';
 
-let connection: any = null;
-export let importQueue: any;
+type ImportJobData = {
+  accountId: string;
+  fileName: string;
+  mappedData: Record<string, unknown>[];
+};
+
+type ImportQueueLike = Pick<Queue, 'add' | 'close' | 'getJob'>;
+
+let connection: IORedis | null = null;
+export let importQueue: ImportQueueLike;
 export let importWorker: Worker | null = null;
-export let redisConnection: any = null;
+type RedisLike = Pick<
+  IORedis,
+  'on' | 'disconnect' | 'quit' | 'get' | 'set' | 'del'
+>;
+
+export let redisConnection: RedisLike;
 
 if (isTest) {
   // Minimal stubs used by tests to allow importing and graceful cleanup.
   redisConnection = {
-    on: () => {},
-    disconnect: async () => {},
-    quit: async () => {},
-  };
+    on: () => redisConnection,
+    disconnect: () => {},
+    quit: async () => 'OK',
+    get: async () => null,
+    set: async () => 'OK',
+    del: async () => 0,
+  } as unknown as RedisLike;
 
   importQueue = {
     add: async () => undefined,
     close: async () => undefined,
-  };
+    getJob: async () => undefined,
+  } as unknown as ImportQueueLike;
 
   importWorker = null;
 } else {
@@ -35,13 +54,13 @@ if (isTest) {
   });
 
   // Connection lifecycle logging to help debug Redis issues
-  connection.on('connect', () => console.log('[REDIS] connect'));
-  connection.on('ready', () => console.log('[REDIS] ready'));
+  connection.on('connect', () => logger.log('[REDIS] connect'));
+  connection.on('ready', () => logger.log('[REDIS] ready'));
   connection.on('error', (err) =>
-    console.error('[REDIS] error', err && err.message),
+    logger.error(`[REDIS] error ${err && err.message}`),
   );
-  connection.on('close', () => console.log('[REDIS] closed'));
-  connection.on('reconnecting', () => console.log('[REDIS] reconnecting'));
+  connection.on('close', () => logger.log('[REDIS] closed'));
+  connection.on('reconnecting', () => logger.log('[REDIS] reconnecting'));
 
   importQueue = new Queue('import-contacts', {
     connection,
@@ -62,15 +81,19 @@ export function initImportWorker(importService: ImportService) {
   if (isTest) {
     // In E2E tests we bypass Redis and execute the queued import immediately
     // so the flow can still validate end-to-end report generation.
-    importQueue.add = async (_name: string, data: any) => {
+    importQueue.add = (async (_name: string, data: ImportJobData) => {
       return importService.processFullImport(
         data.accountId,
         data.fileName,
         data.mappedData,
       );
-    };
+    }) as unknown as Queue['add'];
 
     return null;
+  }
+
+  if (!connection) {
+    throw new Error('Redis connection not initialized for import worker');
   }
 
   importWorker = new Worker(
@@ -79,13 +102,8 @@ export function initImportWorker(importService: ImportService) {
       const { accountId, fileName, mappedData } = job.data;
 
       // Délègue le traitement complet au service
-      console.log(
-        '[IMPORT WORKER] starting job',
-        job.id,
-        'file:',
-        fileName,
-        'rows:',
-        (mappedData || []).length,
+      logger.log(
+        `[IMPORT WORKER] starting job ${job.id} file: ${fileName} rows: ${(mappedData || []).length}`,
       );
       return importService.processFullImport(accountId, fileName, mappedData);
     },
@@ -95,33 +113,30 @@ export function initImportWorker(importService: ImportService) {
     },
   );
 
-  console.log('[IMPORT WORKER] initialized for queue import-contacts');
+  logger.log('[IMPORT WORKER] initialized for queue import-contacts');
 
   importWorker.on('active', (job) => {
     try {
-      console.log(
-        '[IMPORT WORKER] active job',
-        job.id,
-        'name',
-        job.name,
-        'dataKeys',
-        Object.keys(job.data || {}),
+      logger.log(
+        `[IMPORT WORKER] active job ${job.id} name ${job.name} dataKeys ${Object.keys(job.data || {}).join(',')}`,
       );
-    } catch (e) {
-      console.log('[IMPORT WORKER] active job (error logging job data)');
+    } catch {
+      logger.log('[IMPORT WORKER] active job (error logging job data)');
     }
   });
 
   importWorker.on('error', (err) => {
-    console.error('[IMPORT WORKER] error', err && err.stack ? err.stack : err);
+    logger.error(
+      `[IMPORT WORKER] error ${err && err.stack ? err.stack : String(err)}`,
+    );
   });
 
   importWorker.on('completed', (job) => {
-    console.log(`✅ Import job ${job.id} completed`);
+    logger.log(`Import job ${job.id} completed`);
   });
 
   importWorker.on('failed', (job, err) => {
-    console.error(`❌ Import job ${job?.id} failed:`, err.message);
+    logger.error(`Import job ${job?.id} failed: ${err.message}`);
   });
 
   return importWorker;

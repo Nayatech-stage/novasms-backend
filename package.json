@@ -95,14 +95,23 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": ["ts-jest", {
-        "tsconfig": "tsconfig.spec.json",
-        "diagnostics": false
-      }]
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": "tsconfig.spec.json",
+          "diagnostics": false
+        }
+      ]
     },
     "globals": {},
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!**/*.module.ts",
+      "!**/*.dto.ts",
+      "!**/dto/**",
+      "!**/*.interface.ts",
+      "!main.ts",
+      "!**/*.spec.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"

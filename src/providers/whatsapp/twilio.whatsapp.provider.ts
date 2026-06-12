@@ -34,8 +34,11 @@ export class TwilioWhatsappProvider implements WhatsappProvider {
       }
       const json = await res.json();
       return { success: true, messageId: json.sid };
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 }

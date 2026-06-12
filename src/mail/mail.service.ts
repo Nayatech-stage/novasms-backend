@@ -43,7 +43,7 @@ export class MailService {
 
   async sendVerificationEmail(email: string, token: string) {
     const verifyUrl = `${resolvePublicFrontendUrl()}/verify-email/${token}`;
-    console.log('📧 LIEN DE VÉRIFICATION EMAIL:', verifyUrl);
+    this.logger.log(`Lien de vérification email: ${verifyUrl}`);
     const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
 
     const htmlContent = `
@@ -169,7 +169,7 @@ export class MailService {
   async sendPasswordResetEmail(email: string, token: string) {
     const resetUrl = `${resolvePublicFrontendUrl()}/reset-password/${token}`;
 
-    console.log('🔁 LIEN RESET PASSWORD EMAIL:', resetUrl);
+    this.logger.log(`Lien reset password: ${resetUrl}`);
 
     const htmlContent = `
       <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;text-align:center">

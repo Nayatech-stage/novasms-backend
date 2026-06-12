@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-assignment */
 import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';

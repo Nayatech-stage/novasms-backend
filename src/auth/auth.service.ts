@@ -1,6 +1,7 @@
 import {
   Injectable,
   ConflictException,
+  Logger,
   BadRequestException,
   UnauthorizedException,
   InternalServerErrorException,
@@ -52,6 +53,8 @@ type AuthTokens = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private mail: MailService,
@@ -59,13 +62,22 @@ export class AuthService {
     private smsProviderFactory: SmsProviderFactory,
   ) {}
 
-  async register(data: RegisterDto | any) {
+  async register(
+    data:
+      | RegisterDto
+      | {
+          adminEmail?: string;
+          password?: string;
+          companyName?: string;
+          country?: string;
+        },
+  ) {
     // Normalize incoming payloads: support both French DTO and older API shape
-    const email = (data && (data.email ?? data.adminEmail)) || null;
-    const password = (data && (data.motDePasse ?? data.password)) || null;
-    const nom =
-      (data && (data.nom ?? data.companyName)) || 'Nouvelle entreprise';
-    const pays = (data && (data.pays ?? data.country)) || 'CI';
+    const raw = (data ?? {}) as Record<string, string | undefined>;
+    const email = raw.email ?? raw.adminEmail ?? null;
+    const password = raw.motDePasse ?? raw.password ?? null;
+    const nom = raw.nom ?? raw.companyName ?? 'Nouvelle entreprise';
+    const pays = raw.pays ?? raw.country ?? 'CI';
 
     if (!email || !password) {
       throw new BadRequestException('Email and password are required');
@@ -137,9 +149,8 @@ export class AuthService {
       await this.mail.sendVerificationEmail(email, token);
     } catch (err) {
       // don't block registration if mail fails in tests
-      console.warn(
-        'Failed to send verification email:',
-        err instanceof Error ? err.message : err,
+      this.logger.warn(
+        `Failed to send verification email: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
 
@@ -195,7 +206,7 @@ export class AuthService {
       },
     });
 
-    console.log(`[Auth] Email verified: ${account.adminEmail}`);
+    this.logger.log(`Email verified: ${account.adminEmail}`);
     return {
       success: true,
       message: 'Email verified successfully',
@@ -856,18 +867,17 @@ export class AuthService {
         }
       } catch (err) {
         // Fail-safe : on logue l'erreur mais on ne bloque pas (évite lock-out)
-        console.error(
-          '[Auth] 2FA SMS send failed:',
-          err instanceof Error ? err.message : err,
+        this.logger.error(
+          `2FA SMS send failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        console.log(
-          `[Auth] 2FA fallback — code for ${account.adminEmail}: ${code}`,
+        this.logger.debug(
+          `2FA fallback — code for ${account.adminEmail}: ${code}`,
         );
       }
     } else {
       // Aucun numéro connu — mode développement
-      console.log(
-        `[Auth] 2FA dev mode — code for ${account.adminEmail}: ${code}`,
+      this.logger.debug(
+        `2FA dev mode — code for ${account.adminEmail}: ${code}`,
       );
     }
 

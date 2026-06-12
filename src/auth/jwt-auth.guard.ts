@@ -48,7 +48,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     // subsequently `req.accountId` can be populated by the TenantInterceptor.
     if (isDevCampaignCreateRoute) {
       const req2 = context.switchToHttp().getRequest();
-      const authHeader = req2.headers?.authorization || req2.headers?.Authorization;
+      const authHeader =
+        req2.headers?.authorization || req2.headers?.Authorization;
       if (!authHeader) {
         return true;
       }
@@ -59,7 +60,9 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
     try {
       const req = context.switchToHttp().getRequest();
       // Log basic user/account info for debugging tenant issues in dev
-      this.logger.debug(`JwtAuthGuard canActivate result=${result} user=${JSON.stringify(req.user || {})} accountId=${req.accountId}`);
+      this.logger.debug(
+        `JwtAuthGuard canActivate result=${result} user=${JSON.stringify(req.user || {})} accountId=${req.accountId}`,
+      );
     } catch (err) {
       this.logger.debug('JwtAuthGuard: failed to log user info');
     }

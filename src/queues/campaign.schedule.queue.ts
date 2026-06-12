@@ -68,7 +68,10 @@ export class CampaignScheduleProcessor extends WorkerHost {
       where: { id: accountId },
       select: { creditBalance: true },
     });
-    if (!account || account.creditBalance < (campaign.estimatedCost || 0)) {
+    if (
+      !account ||
+      Number(account.creditBalance) < Number(campaign.estimatedCost ?? 0)
+    ) {
       await this.prisma.campaign.update({
         where: { id: campaignId },
         data: { status: CampaignStatus.FAILED },
