@@ -133,7 +133,13 @@ export class AccountController {
   })
   async updateSettings(
     @Request() req: TenantRequest,
-    @Body() body: { alertThreshold?: number; creditLimit?: number },
+    @Body()
+    body: {
+      alertThreshold?: number;
+      creditLimit?: number;
+      language?: string;
+      timezone?: string;
+    },
   ) {
     const accountId = req.user.accountId || req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
@@ -159,6 +165,12 @@ export class AccountController {
         );
       }
       data['creditLimit'] = body.creditLimit;
+    }
+    if (body.language && ['fr', 'en'].includes(body.language)) {
+      data['language'] = body.language;
+    }
+    if (body.timezone?.trim()) {
+      data['timezone'] = body.timezone.trim();
     }
 
     await this.prisma.account.update({ where: { id: accountId }, data });

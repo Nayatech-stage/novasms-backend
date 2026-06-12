@@ -110,6 +110,8 @@ model Account {
   onboardingCompleted   Boolean   @default(false)
   logoUrl               String?   @db.VarChar(512)
   avatarUrl             String?   @db.VarChar(512)
+  language              String    @default("fr") @db.VarChar(10)
+  timezone              String    @default("Africa/Abidjan") @db.VarChar(100)
 
   users                 User[]
   contacts              Contact[]
@@ -554,6 +556,8 @@ model NotificationPrefs {
   smsOnCampaignDone     Boolean  @default(false)
   smsOnLowCredits       Boolean  @default(true)
   creditAlertThreshold  Decimal? @db.Decimal(12,2)
+  weeklyReportEmail     Boolean  @default(true)
+  automationAlertsEmail Boolean  @default(true)
   updatedAt             DateTime @updatedAt
 
   @@map("notification_prefs")
