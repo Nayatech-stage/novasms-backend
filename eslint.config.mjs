@@ -12,6 +12,7 @@ export default tseslint.config(
   ...tseslint.configs.recommendedTypeChecked,
   eslintPluginPrettierRecommended,
   {
+    ignores: ['**/*.spec.ts', '**/*.e2e-spec.ts', 'test/**/*.ts'],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -20,6 +21,20 @@ export default tseslint.config(
       sourceType: 'commonjs',
       parserOptions: {
         projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+  {
+    files: ['**/*.spec.ts', '**/*.e2e-spec.ts', 'test/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+      },
+      sourceType: 'commonjs',
+      parserOptions: {
+        project: './tsconfig.spec.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },
