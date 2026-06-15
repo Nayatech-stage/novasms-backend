@@ -295,6 +295,8 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
         creditBalance: new Decimal(2500),
         alertThreshold: new Decimal(500),
         creditLimit: null,
+        language: 'fr',
+        timezone: 'Africa/Abidjan',
       });
 
       const result = await controller.getBalance(req);
@@ -304,6 +306,8 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
         balance: 2500,
         alertThreshold: 500,
         creditLimit: null,
+        language: 'fr',
+        timezone: 'Africa/Abidjan',
       });
     });
   });

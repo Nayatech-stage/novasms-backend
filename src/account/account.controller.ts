@@ -197,6 +197,8 @@ export class AccountController {
         emailOnTeamInvite: true,
         smsOnCampaignDone: false,
         smsOnLowCredits: true,
+        weeklyReportEmail: true,
+        automationAlertsEmail: true,
       },
     };
   }
@@ -212,6 +214,8 @@ export class AccountController {
       emailOnTeamInvite?: boolean;
       smsOnCampaignDone?: boolean;
       smsOnLowCredits?: boolean;
+      weeklyReportEmail?: boolean;
+      automationAlertsEmail?: boolean;
     },
   ) {
     const accountId = req.user.accountId || req.accountId;
@@ -228,6 +232,10 @@ export class AccountController {
       data['smsOnCampaignDone'] = body.smsOnCampaignDone;
     if (typeof body.smsOnLowCredits === 'boolean')
       data['smsOnLowCredits'] = body.smsOnLowCredits;
+    if (typeof body.weeklyReportEmail === 'boolean')
+      data['weeklyReportEmail'] = body.weeklyReportEmail;
+    if (typeof body.automationAlertsEmail === 'boolean')
+      data['automationAlertsEmail'] = body.automationAlertsEmail;
 
     await this.prisma.notificationPrefs.upsert({
       where: { accountId },
@@ -400,7 +408,13 @@ export class AccountController {
 
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
-      select: { creditBalance: true, alertThreshold: true, creditLimit: true },
+      select: {
+        creditBalance: true,
+        alertThreshold: true,
+        creditLimit: true,
+        language: true,
+        timezone: true,
+      },
     });
     if (!account) throw new NotFoundException('Compte introuvable');
 
@@ -411,6 +425,8 @@ export class AccountController {
         ? Number(account.alertThreshold)
         : null,
       creditLimit: account.creditLimit ? Number(account.creditLimit) : null,
+      language: account.language ?? 'fr',
+      timezone: account.timezone ?? 'Africa/Abidjan',
     };
   }
 
