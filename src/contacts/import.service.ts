@@ -236,6 +236,27 @@ export class ImportService {
   }
 
   /**
+   * Lance un import asynchrone via BullMQ à partir d'un fichier NDJSON déjà uploadé.
+   * Retourne immédiatement un jobId — le traitement se fait en arrière-plan.
+   */
+  async startImportFromFile(
+    accountId: string,
+    fileName: string,
+    filePath: string,
+  ) {
+    const jobId = `import-${accountId}-${Date.now()}`;
+    await importQueue.add(
+      'process-import',
+      { accountId, fileName, filePath },
+      { jobId, attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+    );
+    this.logger.log(
+      `Import file job queued: ${jobId} for account ${accountId} file: ${filePath}`,
+    );
+    return { success: true, jobId };
+  }
+
+  /**
    * Traite un fichier NDJSON d'import ligne par ligne en batches
    * Evite de charger tout le fichier en mémoire pour les gros imports
    */

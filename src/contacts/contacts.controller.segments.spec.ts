@@ -26,6 +26,7 @@ describe('ContactsController — segments et import par chunks', () => {
   const importService = {
     startImport: jest.fn(),
     processFullImportFromFile: jest.fn(),
+    startImportFromFile: jest.fn(),
   };
 
   const req = { accountId: 'acc-1' } as never;
@@ -114,16 +115,17 @@ describe('ContactsController — segments et import par chunks', () => {
     });
 
     it('completeImport lance le traitement streaming (fileName par défaut)', async () => {
-      importService.processFullImportFromFile.mockResolvedValue({
-        imported: 3,
+      importService.startImportFromFile.mockResolvedValue({
+        success: true,
+        jobId: 'job-123',
       });
       const { fileId } = await controller.startImport(req);
       const result = await controller.completeImport(
         { fileId, fileName: '' },
         req,
       );
-      expect(result).toEqual({ success: true, result: { imported: 3 } });
-      expect(importService.processFullImportFromFile).toHaveBeenCalledWith(
+      expect(result).toEqual({ success: true, jobId: 'job-123' });
+      expect(importService.startImportFromFile).toHaveBeenCalledWith(
         'acc-1',
         `import-${fileId}.ndjson`,
         expect.stringContaining(`${fileId}.ndjson`),

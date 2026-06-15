@@ -199,14 +199,13 @@ export class ContactsController {
       throw new BadRequestException('fileId introuvable');
     }
 
-    // Lance le traitement streaming dans le service
     const fileName = body.fileName || `import-${body.fileId}.ndjson`;
-    const result = await this.importService.processFullImportFromFile(
+    const result = await this.importService.startImportFromFile(
       accountId,
       fileName,
       filePath,
     );
-    return { success: true, result };
+    return { success: true, jobId: result.jobId };
   }
 
   @Get('import/:jobId')

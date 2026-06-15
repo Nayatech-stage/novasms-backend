@@ -14,7 +14,8 @@ const isTest =
 type ImportJobData = {
   accountId: string;
   fileName: string;
-  mappedData: Record<string, unknown>[];
+  mappedData?: Record<string, unknown>[];
+  filePath?: string;
 };
 
 type ImportQueueLike = Pick<Queue, 'add' | 'close' | 'getJob'>;
@@ -85,7 +86,7 @@ export function initImportWorker(importService: ImportService) {
       return importService.processFullImport(
         data.accountId,
         data.fileName,
-        data.mappedData,
+        data.mappedData ?? [],
       );
     }) as unknown as Queue['add'];
 
@@ -99,13 +100,27 @@ export function initImportWorker(importService: ImportService) {
   importWorker = new Worker(
     'import-contacts',
     async (job) => {
-      const { accountId, fileName, mappedData } = job.data;
+      const { accountId, fileName, mappedData, filePath } = job.data;
 
-      // Délègue le traitement complet au service
+      if (filePath) {
+        logger.log(
+          `[IMPORT WORKER] starting job ${job.id} file: ${fileName} from path: ${filePath}`,
+        );
+        return importService.processFullImportFromFile(
+          accountId,
+          fileName,
+          filePath,
+        );
+      }
+
       logger.log(
         `[IMPORT WORKER] starting job ${job.id} file: ${fileName} rows: ${(mappedData || []).length}`,
       );
-      return importService.processFullImport(accountId, fileName, mappedData);
+      return importService.processFullImport(
+        accountId,
+        fileName,
+        mappedData ?? [],
+      );
     },
     {
       connection,
