@@ -62,7 +62,12 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Demande de réinitialisation du mot de passe' })
   async forgotPassword(@Body() body: { email: string }) {
-    ForgotPasswordSchema.parse(body);
+    const result = ForgotPasswordSchema.safeParse(body);
+    if (!result.success) {
+      throw new BadRequestException(
+        result.error.issues[0]?.message ?? 'Email invalide',
+      );
+    }
     return this.authService.requestPasswordReset(body.email);
   }
 
@@ -73,7 +78,15 @@ export class AuthController {
     @Param('token') token: string,
     @Body() body: { newPassword: string },
   ) {
-    ResetPasswordSchema.parse({ token, newPassword: body.newPassword });
+    const result = ResetPasswordSchema.safeParse({
+      token,
+      newPassword: body.newPassword,
+    });
+    if (!result.success) {
+      throw new BadRequestException(
+        result.error.issues[0]?.message ?? 'Données invalides',
+      );
+    }
     return this.authService.resetPassword(token, body.newPassword);
   }
 

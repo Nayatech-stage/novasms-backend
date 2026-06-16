@@ -585,6 +585,11 @@ export class AuthService {
       },
     });
 
+    await this.prisma.user.updateMany({
+      where: { accountId: account.id },
+      data: { passwordHash: hashedPassword },
+    });
+
     return { success: true, message: 'Mot de passe réinitialisé avec succès.' };
   }
 
