@@ -29,6 +29,7 @@ import type {
 import type { CreateAutomationDto } from './dto/create-automation.dto';
 import type { UpdateAutomationDto } from './dto/update-automation.dto';
 import { ContactsService } from '../contacts/contacts.service';
+import { calculateSendCost } from '../common/billing.util';
 
 type WorkflowNodeType =
   | 'trigger'
@@ -1447,24 +1448,9 @@ export class AutomationsService {
   private async deductAutomationCredit(
     accountId: string,
     channel: string,
+    messageText = '',
   ): Promise<void> {
-    const defaultCosts: Record<string, number> = {
-      SMS: 5,
-      Email: 1,
-      WhatsApp: 10,
-    };
-    const envKey =
-      channel === 'SMS'
-        ? 'CREDIT_COST_PER_SMS'
-        : channel === 'Email'
-          ? 'CREDIT_COST_PER_EMAIL'
-          : channel === 'WhatsApp'
-            ? 'CREDIT_COST_PER_WHATSAPP'
-            : null;
-
-    const cost = envKey
-      ? parseFloat(process.env[envKey] || String(defaultCosts[channel] ?? 0))
-      : (defaultCosts[channel] ?? 0);
+    const { total: cost } = calculateSendCost(channel, 1, messageText);
 
     if (cost <= 0) return;
 

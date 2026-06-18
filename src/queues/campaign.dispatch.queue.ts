@@ -1,4 +1,5 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
+import { calculateSendCost } from '../common/billing.util';
 
 import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
@@ -949,23 +950,11 @@ export class CampaignDispatchProcessor extends WorkerHost {
       channelType: string;
     },
   ): Promise<void> {
-    let costPerSend = 0;
-
-    const estCost = Number(campaign.estimatedCost ?? 0);
-    const estRecipients = campaign.estimatedRecipients || 0;
-
-    const defaultCosts: Record<string, number> = { SMS: 5, EMAIL: 1 };
-
-    if (estCost > 0 && estRecipients > 0) {
-      costPerSend = estCost / estRecipients;
-    } else {
-      const channelKey = campaign.channelType.toUpperCase();
-      const envKey =
-        channelKey === 'SMS' ? 'CREDIT_COST_PER_SMS' : 'CREDIT_COST_PER_EMAIL';
-      costPerSend = parseFloat(
-        process.env[envKey] || String(defaultCosts[channelKey] ?? 0),
-      );
-    }
+    const { total: costPerSend } = calculateSendCost(
+      campaign.channelType,
+      1,
+      '',
+    );
 
     if (costPerSend <= 0) return;
 

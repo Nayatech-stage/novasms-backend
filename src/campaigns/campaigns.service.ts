@@ -17,6 +17,11 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { ContactsService } from '../contacts/contacts.service';
 import { randomInt } from 'crypto';
+import {
+  calculateSendCost,
+  countSmsParts,
+  getUnitPrice,
+} from '../common/billing.util';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -863,14 +868,8 @@ export class CampaignsService {
     text: string,
     recipientCount: number,
   ): { parts: number; cost: number } {
-    // eslint-disable-next-line no-control-regex
-    const GSM7_REGEX = /^[\w\s@£$¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΣΘΞ\x00-\x7F]+$/;
-    const isGsm7 = GSM7_REGEX.test(text);
-    const chunkSize = isGsm7 ? 160 : 70;
-    const length = text.length;
-    const parts = Math.ceil(length / chunkSize) || 1;
-    const costPerSms = 0.015;
-    return { parts, cost: parts * recipientCount * costPerSms };
+    const { parts, total } = calculateSendCost('SMS', recipientCount, text);
+    return { parts, cost: total };
   }
 
   /**
@@ -911,29 +910,29 @@ export class CampaignsService {
         };
       }
 
-      // NEW-CR1 : Bloquer si solde insuffisant avant de lancer l'envoi
+      // Bloquer si solde insuffisant avant de lancer l'envoi
       const account = await this.prisma.account.findUnique({
         where: { id: accountId },
         select: { creditBalance: true },
       });
       if (account) {
-        const defaultCosts: Record<string, number> = { SMS: 5, EMAIL: 1 };
-        const channelKey = campaign.channelType.toUpperCase();
-        const envKey =
-          channelKey === 'SMS'
-            ? 'CREDIT_COST_PER_SMS'
-            : 'CREDIT_COST_PER_EMAIL';
-        const costPerSend = parseFloat(
-          process.env[envKey] || String(defaultCosts[channelKey] ?? 0),
+        const { total: estimatedTotal, parts } = calculateSendCost(
+          campaign.channelType,
+          contacts.length,
+          campaign.content ?? '',
         );
-        const estimatedTotal = costPerSend * contacts.length;
         if (
           estimatedTotal > 0 &&
           Number(account.creditBalance) < estimatedTotal
         ) {
+          const unitPrice = getUnitPrice(campaign.channelType);
+          const partsInfo =
+            campaign.channelType.toUpperCase() === 'SMS' && parts > 1
+              ? ` (message = ${parts} parties SMS)`
+              : '';
           return {
             success: false,
-            error: `Solde insuffisant — il vous faut ${estimatedTotal.toLocaleString('fr-FR')} FCFA pour ${contacts.length} contacts. Solde actuel : ${Number(account.creditBalance).toLocaleString('fr-FR')} FCFA.`,
+            error: `Solde insuffisant — il vous faut ${estimatedTotal.toLocaleString('fr-FR')} FCFA pour ${contacts.length} contacts à ${unitPrice} FCFA${partsInfo}. Solde actuel : ${Number(account.creditBalance).toLocaleString('fr-FR')} FCFA.`,
           };
         }
       }
