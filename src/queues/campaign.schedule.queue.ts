@@ -1,4 +1,5 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
+import { calculateSendCost } from '../common/billing.util';
 
 import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
@@ -64,14 +65,18 @@ export class CampaignScheduleProcessor extends WorkerHost {
       return { success: false, reason: 'quiet-hours-deferred' };
     }
 
+    const nbContacts = campaign.estimatedRecipients || 0;
+    const realCost = calculateSendCost(
+      campaign.channelType,
+      nbContacts,
+      campaign.content ?? '',
+    ).total;
+
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
       select: { creditBalance: true },
     });
-    if (
-      !account ||
-      Number(account.creditBalance) < Number(campaign.estimatedCost ?? 0)
-    ) {
+    if (!account || Number(account.creditBalance) < realCost) {
       await this.prisma.campaign.update({
         where: { id: campaignId },
         data: { status: CampaignStatus.FAILED },
