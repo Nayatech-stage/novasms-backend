@@ -17,7 +17,7 @@ export class AppController {
   @Get('api/status')
   @ApiOperation({ summary: 'Status détaillé' })
   @ApiResponse({ status: 200, description: 'Statut de l API' })
-  getStatus(): object {
+  async getStatus(): Promise<object> {
     return this.appService.getStatus();
   }
 

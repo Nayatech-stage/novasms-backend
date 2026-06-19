@@ -19,6 +19,7 @@ import type { RegisterDto } from './dto/register.dto';
 import { Tenant } from '../common/decorators/tenant.decorator';
 import { ForgotPasswordSchema } from './dto/forgot-password.dto';
 import { ResetPasswordSchema } from './dto/reset-password.dto';
+import { Throttle } from '@nestjs/throttler';
 
 @ApiTags('Authentification')
 @Controller('auth')
@@ -53,6 +54,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @ApiOperation({ summary: 'Connexion utilisateur (Email/Mdp)' })
   async login(@Body() body: { email: string; motDePasse: string }) {
     return this.authService.login(body.email, body.motDePasse);
@@ -60,6 +62,7 @@ export class AuthController {
 
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @ApiOperation({ summary: 'Demande de réinitialisation du mot de passe' })
   async forgotPassword(@Body() body: { email: string }) {
     const result = ForgotPasswordSchema.safeParse(body);
