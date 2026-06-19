@@ -6,11 +6,13 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   Request,
   BadRequestException,
   NotFoundException,
   Res,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -493,5 +495,149 @@ export class AccountController {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.json(exportData);
+  }
+
+  // ─── Historique des dépenses (admin only) ───────────────────────────────────
+
+  @Get('credit-usage/summary')
+  @ApiOperation({ summary: 'Résumé des dépenses par canal et par membre' })
+  async getCreditUsageSummary(@Request() req: TenantRequest) {
+    const accountId = req.user.accountId || req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    if (req.user.role !== UserRole.Admin)
+      throw new ForbiddenException('Réservé aux administrateurs');
+
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [byChannel, bySource, byMember, monthTotal] = await Promise.all([
+      // Total par canal (SMS / EMAIL / WHATSAPP)
+      this.prisma.creditUsage.groupBy({
+        by: ['channel'],
+        where: { accountId },
+        _sum: { totalCost: true, contacts: true },
+        _count: { id: true },
+      }),
+      // Total par source (CAMPAIGN / AUTOMATION / API)
+      this.prisma.creditUsage.groupBy({
+        by: ['source'],
+        where: { accountId },
+        _sum: { totalCost: true },
+        _count: { id: true },
+      }),
+      // Dépenses par membre (userId non null)
+      this.prisma.creditUsage.groupBy({
+        by: ['userId'],
+        where: { accountId, userId: { not: null } },
+        _sum: { totalCost: true },
+        _count: { id: true },
+        orderBy: { _sum: { totalCost: 'desc' } },
+      }),
+      // Total du mois en cours
+      this.prisma.creditUsage.aggregate({
+        where: { accountId, createdAt: { gte: startOfMonth } },
+        _sum: { totalCost: true },
+      }),
+    ]);
+
+    // Enrichir les membres avec email + nom
+    const userIds = byMember.map((m) => m.userId).filter(Boolean) as string[];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            role: true,
+          },
+        })
+      : [];
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u]));
+
+    return {
+      monthTotal: Number(monthTotal._sum.totalCost ?? 0),
+      byChannel: byChannel.map((r) => ({
+        channel: r.channel,
+        totalCost: Number(r._sum.totalCost ?? 0),
+        totalContacts: r._sum.contacts ?? 0,
+        operationCount: r._count.id,
+      })),
+      bySource: bySource.map((r) => ({
+        source: r.source,
+        totalCost: Number(r._sum.totalCost ?? 0),
+        operationCount: r._count.id,
+      })),
+      byMember: byMember.map((r) => ({
+        userId: r.userId,
+        user: r.userId ? (userMap[r.userId] ?? null) : null,
+        totalCost: Number(r._sum.totalCost ?? 0),
+        operationCount: r._count.id,
+      })),
+    };
+  }
+
+  @Get('credit-usage')
+  @ApiOperation({ summary: 'Historique paginé des dépenses' })
+  async getCreditUsageHistory(
+    @Request() req: TenantRequest,
+    @Query('page') page = '1',
+    @Query('limit') limit = '20',
+    @Query('channel') channel?: string,
+    @Query('source') source?: string,
+    @Query('userId') userId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const accountId = req.user.accountId || req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    if (req.user.role !== UserRole.Admin)
+      throw new ForbiddenException('Réservé aux administrateurs');
+
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = {
+      accountId,
+      ...(channel ? { channel: channel.toUpperCase() } : {}),
+      ...(source ? { source: source.toUpperCase() } : {}),
+      ...(userId ? { userId } : {}),
+      ...(from || to
+        ? {
+            createdAt: {
+              ...(from ? { gte: new Date(from) } : {}),
+              ...(to ? { lte: new Date(to) } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.creditUsage.findMany({
+        where,
+        include: {
+          user: {
+            select: { id: true, email: true, firstName: true, lastName: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+      this.prisma.creditUsage.count({ where }),
+    ]);
+
+    return {
+      data: data.map((r) => ({
+        ...r,
+        totalCost: Number(r.totalCost),
+        unitPrice: Number(r.unitPrice),
+      })),
+      total,
+      page: pageNum,
+      limit: limitNum,
+    };
   }
 }

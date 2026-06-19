@@ -127,6 +127,8 @@ model Account {
   jobs                  Job[]
   providerConfigs       ProviderConfig[]
   notificationPrefs     NotificationPrefs?
+  apiKeys               ApiKey[]
+  creditUsage           CreditUsage[]
 
   @@map("accounts")
 }
@@ -146,6 +148,7 @@ model User {
 
   auditLogs       AuditLog[]
   mobileMoneyTransactions MobileMoneyTransaction[]
+  creditUsage     CreditUsage[]
 
   @@map("users")
   @@index([accountId])
@@ -546,6 +549,40 @@ model ProviderConfig {
   @@map("provider_configs")
 }
 
+model ApiKey {
+  id          String      @id @default(uuid())
+  accountId   String
+  name        String      @db.VarChar(100)
+  keyHash     String      @unique @db.VarChar(64)
+  keyPrefix   String      @db.VarChar(20)
+  keySuffix   String      @db.VarChar(4)
+  permissions String[]    @default([])
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime    @default(now()) @db.Timestamp
+  revokedAt   DateTime?
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  logs        ApiKeyLog[]
+
+  @@map("api_keys")
+}
+
+model ApiKeyLog {
+  id          String   @id @default(uuid())
+  apiKeyId    String
+  accountId   String
+  endpoint    String   @db.VarChar(100)
+  method      String   @db.VarChar(10)
+  statusCode  Int      @default(200)
+  creditsUsed Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @db.Timestamp
+  apiKey      ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@map("api_key_logs")
+  @@index([apiKeyId, createdAt(sort: Desc)])
+  @@index([accountId, createdAt(sort: Desc)])
+}
+
 model NotificationPrefs {
   id                    String   @id @default(uuid())
   accountId             String   @unique
@@ -561,4 +598,26 @@ model NotificationPrefs {
   updatedAt             DateTime @updatedAt
 
   @@map("notification_prefs")
+}
+
+// Historique de chaque débit de crédits (campagne, automation, API publique)
+model CreditUsage {
+  id          String    @id @default(uuid())
+  accountId   String
+  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?     @relation(fields: [userId], references: [id])
+  channel     String    @db.VarChar(20)    // SMS | EMAIL | WHATSAPP
+  source      String    @db.VarChar(20)    // CAMPAIGN | AUTOMATION | API
+  sourceId    String?   @db.VarChar(36)    // uuid campagne ou automation
+  sourceName  String?   @db.VarChar(255)
+  contacts    Int       @default(1)
+  parts       Int       @default(1)
+  unitPrice   Decimal   @db.Decimal(10,2)
+  totalCost   Decimal   @db.Decimal(12,2)
+  createdAt   DateTime  @default(now()) @db.Timestamp
+
+  @@map("credit_usage")
+  @@index([accountId, createdAt(sort: Desc)])
+  @@index([accountId, userId, createdAt(sort: Desc)])
 }

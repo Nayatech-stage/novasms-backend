@@ -882,6 +882,7 @@ export class CampaignsService {
       immediateOrScheduled?: 'immediate' | 'scheduled';
       scheduledAt?: Date;
     },
+    userId?: string,
   ) {
     try {
       const campaign = await this.prisma.campaign.findFirst({
@@ -910,31 +911,35 @@ export class CampaignsService {
         };
       }
 
+      // Calculer le coût estimé une seule fois — réutilisé pour la vérification du solde et le log
+      const {
+        total: estimatedTotal,
+        parts: smsParts,
+        unitPrice,
+      } = calculateSendCost(
+        campaign.channelType,
+        contacts.length,
+        campaign.content ?? '',
+      );
+
       // Bloquer si solde insuffisant avant de lancer l'envoi
       const account = await this.prisma.account.findUnique({
         where: { id: accountId },
         select: { creditBalance: true },
       });
-      if (account) {
-        const { total: estimatedTotal, parts } = calculateSendCost(
-          campaign.channelType,
-          contacts.length,
-          campaign.content ?? '',
-        );
-        if (
-          estimatedTotal > 0 &&
-          Number(account.creditBalance) < estimatedTotal
-        ) {
-          const unitPrice = getUnitPrice(campaign.channelType);
-          const partsInfo =
-            campaign.channelType.toUpperCase() === 'SMS' && parts > 1
-              ? ` (message = ${parts} parties SMS)`
-              : '';
-          return {
-            success: false,
-            error: `Solde insuffisant — il vous faut ${estimatedTotal.toLocaleString('fr-FR')} FCFA pour ${contacts.length} contacts à ${unitPrice} FCFA${partsInfo}. Solde actuel : ${Number(account.creditBalance).toLocaleString('fr-FR')} FCFA.`,
-          };
-        }
+      if (
+        account &&
+        estimatedTotal > 0 &&
+        Number(account.creditBalance) < estimatedTotal
+      ) {
+        const partsInfo =
+          campaign.channelType.toUpperCase() === 'SMS' && smsParts > 1
+            ? ` (message = ${smsParts} parties SMS)`
+            : '';
+        return {
+          success: false,
+          error: `Solde insuffisant — il vous faut ${estimatedTotal.toLocaleString('fr-FR')} FCFA pour ${contacts.length} contacts à ${unitPrice} FCFA${partsInfo}. Solde actuel : ${Number(account.creditBalance).toLocaleString('fr-FR')} FCFA.`,
+        };
       }
 
       const emailTestRecipient = process.env.RESEND_TEST_RECIPIENT?.trim();
@@ -1055,6 +1060,24 @@ export class CampaignsService {
       });
 
       await this.prisma.send.createMany({ data: sendRecords });
+
+      // Enregistrer la dépense pour le suivi admin (1 ligne par envoi de campagne)
+      if (estimatedTotal > 0) {
+        await this.prisma.creditUsage.create({
+          data: {
+            accountId,
+            userId: userId ?? null,
+            channel: campaign.channelType.toUpperCase(),
+            source: 'CAMPAIGN',
+            sourceId: campaignId,
+            sourceName: campaign.name,
+            contacts: deliveryContacts.length,
+            parts: smsParts,
+            unitPrice,
+            totalCost: estimatedTotal,
+          },
+        });
+      }
 
       // Mettre à jour la campagne
       await this.prisma.campaign.update({

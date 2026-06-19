@@ -329,10 +329,16 @@ export class CampaignsController {
         return { success: false, error: 'Date de programmation requise' };
       }
 
-      const result = await this.campaignsService.sendCampaign(accountId, id, {
-        immediateOrScheduled,
-        scheduledAt: scheduledAt || undefined,
-      });
+      const userId = (req as any)?.user?.sub as string | undefined;
+      const result = await this.campaignsService.sendCampaign(
+        accountId,
+        id,
+        {
+          immediateOrScheduled,
+          scheduledAt: scheduledAt || undefined,
+        },
+        userId,
+      );
       // Ensure response includes a `status` for older callers expecting it
       if (immediateOrScheduled === 'immediate' && !result.status) {
         result.status = 'SENDING';

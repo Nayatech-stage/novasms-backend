@@ -771,6 +771,9 @@ export class AutomationsService {
     await this.deductAutomationCredit(
       execution.automation.accountId,
       execution.automation.channel,
+      '',
+      execution.automation.id,
+      execution.automation.name,
     );
 
     await this.prisma.$transaction([
@@ -831,6 +834,9 @@ export class AutomationsService {
             await this.deductAutomationCredit(
               execution.automation.accountId,
               execution.automation.channel,
+              '',
+              execution.automation.id,
+              execution.automation.name,
             );
             await this.prisma.automation.update({
               where: { id: execution.automation.id },
@@ -1449,8 +1455,14 @@ export class AutomationsService {
     accountId: string,
     channel: string,
     messageText = '',
+    automationId?: string,
+    automationName?: string,
   ): Promise<void> {
-    const { total: cost } = calculateSendCost(channel, 1, messageText);
+    const {
+      total: cost,
+      parts,
+      unitPrice,
+    } = calculateSendCost(channel, 1, messageText);
 
     if (cost <= 0) return;
 
@@ -1465,6 +1477,22 @@ export class AutomationsService {
       this.logger.warn(
         `Account ${accountId}: solde insuffisant pour déduire ${cost} FCFA (automation ${channel}).`,
       );
+      return;
     }
+
+    // Logger la dépense pour le suivi admin
+    await this.prisma.creditUsage.create({
+      data: {
+        accountId,
+        channel: channel.toUpperCase(),
+        source: 'AUTOMATION',
+        sourceId: automationId ?? null,
+        sourceName: automationName ?? null,
+        contacts: 1,
+        parts,
+        unitPrice,
+        totalCost: cost,
+      },
+    });
   }
 }
