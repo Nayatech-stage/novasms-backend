@@ -40,7 +40,8 @@
     "eventemitter2": "^6.4.9",
     "helmet": "^8.2.0",
     "ioredis": "^5.10.1",
-    "nodemailer": "^8.0.7",
+    "multer": "^2.2.0",
+    "nodemailer": "^9.0.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "pdfkit": "^0.18.0",
@@ -50,8 +51,7 @@
     "speakeasy": "^2.0.0",
     "stripe": "^17.7.0",
     "swagger-ui-express": "^5.0.1",
-    "uuid": "^14.0.0",
-    "xlsx": "^0.18.5"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -71,7 +71,6 @@
     "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^7.0.0",
     "@types/uuid": "^10.0.0",
-    "@types/xlsx": "^0.0.35",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",

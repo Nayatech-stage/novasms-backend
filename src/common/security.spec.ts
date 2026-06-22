@@ -41,7 +41,7 @@ describe('RolesGuard — contrôle d’accès par rôle (RG-40 / US-015)', () =>
 
     expect(() =>
       guard.canActivate(makeContext({ user: { role: UserRole.Analyst } })),
-    ).toThrow('Insufficient permissions');
+    ).toThrow('Accès refusé');
   });
 
   it('autorise un rôle dans la liste requise', () => {

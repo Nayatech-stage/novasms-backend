@@ -748,6 +748,8 @@ export class AuthService {
         twoFactorCode: null,
         twoFactorCodeExpiry: null,
         twoFactorSecret: null,
+        twoFactorEnabled: false,
+        twoFactorPhone: null,
         backupCodes: [],
         onboardingCompleted: account.onboardingCompleted,
       },
@@ -1143,11 +1145,15 @@ export class AuthService {
         throw new BadRequestException('Primary user does not match account');
       }
 
-      // ✅ Correction: comparaison avec enum
-      if (desiredRole && existingUser.role !== desiredRole) {
+      // Un Admin ne peut jamais être rétrogradé via le wizard de profil
+      const canChangeRole =
+        desiredRole &&
+        existingUser.role !== desiredRole &&
+        existingUser.role !== UserRole.Admin;
+      if (canChangeRole) {
         return this.prisma.user.update({
           where: { email: account.adminEmail },
-          data: { role: desiredRole }, // ✅ Enum UserRole
+          data: { role: desiredRole },
         });
       }
 

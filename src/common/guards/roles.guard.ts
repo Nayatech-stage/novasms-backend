@@ -46,12 +46,15 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('No user role found in token');
     }
 
-    // Check if user role is in allowed roles
-    const hasRole = requiredRoles.includes(user.role as UserRole);
+    // Admin a accès à tout sans restriction
+    if (user.role === UserRole.Admin) {
+      return true;
+    }
 
+    const hasRole = requiredRoles.includes(user.role as UserRole);
     if (!hasRole) {
       throw new ForbiddenException(
-        `Insufficient permissions. Required roles: ${requiredRoles.join(', ')}. Your role: ${user.role}`,
+        `Accès refusé. Rôles requis : ${requiredRoles.join(', ')}. Votre rôle : ${user.role}`,
       );
     }
 
