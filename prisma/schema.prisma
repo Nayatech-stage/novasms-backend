@@ -7,7 +7,523 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============ ENUMS ============
+model Account {
+  id                      String                   @id @default(uuid())
+  companyName             String                   @db.VarChar(255)
+  adminEmail              String                   @unique @db.VarChar(255)
+  passwordHash            String                   @db.VarChar(255)
+  country                 String                   @db.Char(3)
+  creditBalance           Decimal                  @default(0) @db.Decimal(12, 2)
+  alertThreshold          Decimal?                 @db.Decimal(12, 2)
+  createdAt               DateTime                 @default(now()) @db.Timestamp(6)
+  gdprStatus              String                   @default("active") @db.VarChar(50)
+  emailVerified           Boolean                  @default(false)
+  confirmationToken       String?                  @unique
+  tokenExpiry             DateTime?
+  loginAttempts           Int                      @default(0)
+  lockedUntil             DateTime?
+  twoFactorCode           String?                  @db.VarChar(10)
+  twoFactorCodeExpiry     DateTime?
+  twoFactorSecret         String?                  @db.VarChar(64)
+  twoFactorPhone          String?                  @db.VarChar(20)
+  backupCodes             String[]                 @default([])
+  onboardingCompleted     Boolean                  @default(false)
+  resetPasswordToken      String?                  @unique
+  resetPasswordExpiry     DateTime?
+  twoFactorEnabled        Boolean                  @default(false)
+  avatarUrl               String?                  @db.VarChar(512)
+  logoUrl                 String?                  @db.VarChar(512)
+  creditLimit             Decimal?                 @db.Decimal(12, 2)
+  language                String                   @default("fr") @db.VarChar(10)
+  timezone                String                   @default("Africa/Abidjan") @db.VarChar(100)
+  apiKeys                 ApiKey[]
+  auditLogs               AuditLog[]
+  automations             Automation[]
+  campaigns               Campaign[]
+  contacts                Contact[]
+  creditUsage             CreditUsage[]
+  importReports           ImportReport[]
+  invitations             Invitation[]
+  jobs                    Job[]
+  mobileMoneyTransactions MobileMoneyTransaction[]
+  notificationPrefs       NotificationPrefs?
+  providerConfigs         ProviderConfig[]
+  segments                Segment[]
+  templates               Template[]
+  transactions            Transaction[]
+  users                   User[]
+
+  @@map("accounts")
+}
+
+model User {
+  id                      String                   @id @default(uuid())
+  accountId               String
+  email                   String                   @unique @db.VarChar(255)
+  passwordHash            String                   @db.VarChar(255)
+  twoFactorEnabled        Boolean                  @default(false)
+  lastLogin               DateTime?                @db.Timestamp(6)
+  role                    UserRole                 @default(Editor)
+  avatarUrl               String?                  @db.VarChar(512)
+  firstName               String?                  @db.VarChar(100)
+  lastName                String?                  @db.VarChar(100)
+  auditLogs               AuditLog[]
+  creditUsage             CreditUsage[]
+  mobileMoneyTransactions MobileMoneyTransaction[]
+  account                 Account                  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("users")
+}
+
+model Contact {
+  id                 String              @id @default(uuid())
+  email              String?             @db.VarChar(255)
+  tags               Json?
+  optOut             Boolean             @default(false)
+  accountId          String
+  createdAt          DateTime            @default(now()) @db.Timestamp(6)
+  firstName          String?             @db.VarChar(100)
+  lastName           String?             @db.VarChar(100)
+  phone              String?             @db.VarChar(20)
+  location           String?             @db.VarChar(100)
+  notes              Json?               @default("[]")
+  optOutAt           DateTime?           @db.Timestamp(6)
+  anonymizedAt       DateTime?           @db.Timestamp(6)
+  analytics          Analytic[]
+  consents           Consent[]
+  account            Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  sends              Send[]
+  workflowExecutions WorkflowExecution[]
+
+  @@unique([accountId, email])
+  @@unique([accountId, phone])
+  @@index([accountId, email])
+  @@index([accountId, phone])
+  @@index([accountId, createdAt])
+  @@index([accountId, location])
+  @@index([accountId, optOut])
+  @@index([accountId, firstName])
+  @@index([accountId, lastName])
+  @@map("contacts")
+}
+
+model Segment {
+  id             String     @id @default(uuid())
+  type           String?    @db.VarChar(20)
+  accountId      String
+  criteria       Json?
+  lastCalculated DateTime?  @db.Timestamp(6)
+  name           String?    @db.VarChar(255)
+  contactCount   Int        @default(0)
+  campaigns      Campaign[]
+  account        Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("segments")
+}
+
+model Campaign {
+  id                  String              @id @default(uuid())
+  accountId           String
+  channelType         String              @db.VarChar(20)
+  subject             String?             @db.VarChar(255)
+  content             String?
+  scheduledAt         DateTime?           @db.Timestamp(6)
+  estimatedCost       Decimal?            @db.Decimal(12, 2)
+  name                String              @default("Campagne") @db.VarChar(255)
+  segmentId           String?
+  abSplitPct          Int                 @default(50)
+  abTestDuration      Int?
+  abWinner            CampaignVariant?
+  bestSendTime        Json?
+  clickedCount        Int                 @default(0)
+  clickedCountA       Int                 @default(0)
+  clickedCountB       Int                 @default(0)
+  contentJson         Json?
+  createdAt           DateTime            @default(now())
+  deliveredCount      Int                 @default(0)
+  failedCount         Int                 @default(0)
+  openedCount         Int                 @default(0)
+  openedCountA        Int                 @default(0)
+  openedCountB        Int                 @default(0)
+  sentCount           Int                 @default(0)
+  sentCountA          Int                 @default(0)
+  sentCountB          Int                 @default(0)
+  subjectA            String?             @db.VarChar(255)
+  subjectB            String?             @db.VarChar(255)
+  timezone            String              @default("Africa/Abidjan") @db.VarChar(50)
+  updatedAt           DateTime            @updatedAt
+  status              CampaignStatus      @default(DRAFT)
+  promoCode           String?             @db.VarChar(50)
+  estimatedRecipients Int                 @default(0)
+  abResults           ABTestResult[]
+  analytics           Analytic[]
+  automations         Automation[]
+  images              CampaignImage[]
+  account             Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  segment             Segment?            @relation(fields: [segmentId], references: [id])
+  clickHeatmaps       ClickHeatmap[]
+  engagementHeatmaps  EngagementHeatmap[]
+  sends               Send[]
+
+  @@index([accountId, status, channelType])
+  @@index([accountId, createdAt])
+  @@index([scheduledAt])
+  @@index([abWinner])
+  @@map("campaigns")
+}
+
+model Send {
+  id            String      @id @default(uuid())
+  campaignId    String
+  contactId     String
+  sentAt        DateTime?   @db.Timestamp(6)
+  openedAt      DateTime?   @db.Timestamp(6)
+  clickedAt     DateTime?   @db.Timestamp(6)
+  bouncedReason String?     @db.VarChar(255)
+  deliveredAt   DateTime?   @db.Timestamp(6)
+  variant       SendVariant @default(NONE)
+  status        SendStatus  @default(PENDING)
+  campaign      Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact       Contact     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, contactId])
+  @@index([contactId])
+  @@index([campaignId, variant])
+  @@index([campaignId, status])
+  @@index([campaignId, status, variant])
+  @@map("sends")
+}
+
+model CampaignImage {
+  id         String   @id @default(uuid())
+  campaignId String
+  fileName   String   @db.VarChar(255)
+  fileSize   Int
+  mimeType   String   @db.VarChar(100)
+  storageUrl String
+  uploadedAt DateTime @default(now())
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@map("campaign_images")
+}
+
+model ABTestResult {
+  id           String          @id @default(uuid())
+  campaignId   String
+  variant      CampaignVariant
+  sentCount    Int             @default(0)
+  openedCount  Int             @default(0)
+  clickedCount Int             @default(0)
+  evaluatedAt  DateTime?       @db.Timestamp(6)
+  campaign     Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, variant])
+  @@map("ab_test_results")
+}
+
+model Automation {
+  id            String              @id @default(uuid())
+  accountId     String
+  name          String              @db.VarChar(255)
+  trigger       String              @db.VarChar(100)
+  delaySeconds  Int                 @default(0)
+  workflow      Json?
+  sendCount     Int                 @default(0)
+  status        AutomationStatus    @default(Draft)
+  channel       String              @db.VarChar(20)
+  templateId    String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  campaignId    String?
+  triggerConfig Json?
+  triggerType   String              @default("contact_added") @db.VarChar(100)
+  account       Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  campaign      Campaign?           @relation(fields: [campaignId], references: [id])
+  template      Template?           @relation(fields: [templateId], references: [id])
+  executions    WorkflowExecution[]
+
+  @@index([accountId, status])
+  @@index([campaignId])
+  @@map("automations")
+}
+
+model WorkflowExecution {
+  id            String     @id @default(uuid())
+  automationId  String
+  contactId     String
+  currentNodeId String?    @db.VarChar(100)
+  status        String     @default("Running") @db.VarChar(20)
+  startedAt     DateTime   @default(now())
+  finishedAt    DateTime?
+  context       Json?
+  automation    Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  contact       Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([automationId, contactId])
+  @@map("workflow_executions")
+}
+
+model Transaction {
+  id        String             @id @default(uuid())
+  reference String?            @db.VarChar(255)
+  accountId String
+  amount    Decimal            @db.Decimal(12, 2)
+  createdAt DateTime           @default(now()) @db.Timestamp(6)
+  method    TransactionMethod?
+  status    TransactionStatus  @default(Pending)
+  invoice   Invoice?
+  account   Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@map("transactions")
+}
+
+model MobileMoneyTransaction {
+  id                    String    @id @db.VarChar(64)
+  accountId             String
+  userId                String
+  status                String    @db.VarChar(20)
+  operator              String    @db.VarChar(20)
+  phoneNumber           String    @db.VarChar(30)
+  amount                Decimal   @db.Decimal(12, 2)
+  currency              String    @db.VarChar(10)
+  externalTransactionId String?   @db.VarChar(255)
+  createdAt             DateTime  @default(now()) @db.Timestamp(6)
+  completedAt           DateTime? @db.Timestamp(6)
+  account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@index([userId, createdAt])
+  @@map("mobile_money_transactions")
+}
+
+model Template {
+  id          String       @id @default(uuid())
+  accountId   String
+  channelType String?      @db.VarChar(20)
+  htmlContent String?
+  isPreset    Boolean      @default(false)
+  name        String?      @db.VarChar(255)
+  contentText String?
+  createdAt   DateTime     @default(now())
+  createdBy   String?      @db.VarChar(255)
+  key         String       @unique @db.VarChar(255)
+  updatedAt   DateTime     @updatedAt
+  variables   Json?
+  automations Automation[]
+  account     Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, isPreset])
+  @@map("templates")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String?  @db.VarChar(255)
+  details   Json?
+  accountId String
+  createdAt DateTime @default(now()) @db.Timestamp(6)
+  userId    String?
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.VarChar(512)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([accountId, createdAt])
+  @@map("audit_logs")
+}
+
+model Invitation {
+  id        String           @id @default(uuid())
+  email     String           @db.VarChar(255)
+  token     String           @unique @db.VarChar(255)
+  accountId String
+  expiresAt DateTime         @db.Timestamp(6)
+  role      UserRole         @default(Editor)
+  status    InvitationStatus @default(Sent)
+  account   Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, status])
+  @@map("invitations")
+}
+
+model ImportReport {
+  id             String   @id @default(uuid())
+  accountId      String
+  fileName       String?  @db.VarChar(255)
+  totalRecords   Int?
+  successCount   Int?
+  duplicateCount Int?
+  errorCount     Int?
+  createdAt      DateTime @default(now()) @db.Timestamp(6)
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@map("import_reports")
+}
+
+model Job {
+  id         String    @id @default(uuid())
+  type       String?   @db.VarChar(50)
+  accountId  String
+  createdAt  DateTime  @default(now()) @db.Timestamp(6)
+  finishedAt DateTime? @db.Timestamp(6)
+  status     JobStatus @default(Pending)
+  account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, status])
+  @@map("jobs")
+}
+
+model Analytic {
+  id         String          @id @default(uuid())
+  contactId  String?
+  campaignId String?
+  createdAt  DateTime?       @db.Timestamp(6)
+  action     AnalyticAction?
+  campaign   Campaign?       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact    Contact?        @relation(fields: [contactId], references: [id])
+
+  @@index([campaignId, action])
+  @@index([contactId, createdAt])
+  @@map("analytics")
+}
+
+model EngagementHeatmap {
+  id         String   @id @default(uuid())
+  campaignId String
+  hour       Int      @db.SmallInt
+  openCount  Int      @default(0)
+  clickCount Int      @default(0)
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, hour])
+  @@map("engagement_heatmap")
+}
+
+model ClickHeatmap {
+  id         String   @id @default(uuid())
+  campaignId String
+  zone       String?  @db.VarChar(255)
+  clickCount Int      @default(0)
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+  @@map("click_heatmap")
+}
+
+model Consent {
+  id          String   @id @default(uuid())
+  contactId   String
+  consentedAt DateTime @default(now()) @db.Timestamp(6)
+  source      String?  @db.VarChar(255)
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId])
+  @@map("consents")
+}
+
+model Invoice {
+  id            String       @id @default(uuid())
+  transactionId String?      @unique
+  s3Path        String?      @db.VarChar(255)
+  createdAt     DateTime     @default(now()) @db.Timestamp(6)
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("invoices")
+}
+
+model ProviderConfig {
+  id           String   @id @default(uuid())
+  accountId    String
+  providerType String   @db.VarChar(50)
+  providerName String   @db.VarChar(50)
+  isActive     Boolean  @default(false)
+  config       Json?
+  createdAt    DateTime @default(now()) @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, providerType, providerName])
+  @@index([accountId, providerType])
+  @@map("provider_configs")
+}
+
+model ApiKey {
+  id          String      @id @default(uuid())
+  accountId   String
+  name        String      @db.VarChar(100)
+  keyHash     String      @unique @db.VarChar(64)
+  keyPrefix   String      @db.VarChar(20)
+  keySuffix   String      @db.VarChar(4)
+  permissions String[]    @default([])
+  lastUsedAt  DateTime?
+  createdAt   DateTime    @default(now()) @db.Timestamp(6)
+  revokedAt   DateTime?
+  expiresAt   DateTime?
+  logs        ApiKeyLog[]
+  account     Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model ApiKeyLog {
+  id          String   @id @default(uuid())
+  apiKeyId    String
+  accountId   String
+  endpoint    String   @db.VarChar(100)
+  method      String   @db.VarChar(10)
+  statusCode  Int      @default(200)
+  creditsUsed Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+  apiKey      ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([apiKeyId, createdAt(sort: Desc)])
+  @@index([accountId, createdAt(sort: Desc)])
+  @@map("api_key_logs")
+}
+
+model NotificationPrefs {
+  id                    String   @id @default(uuid())
+  accountId             String   @unique
+  emailOnCampaignDone   Boolean  @default(true)
+  emailOnLowCredits     Boolean  @default(true)
+  emailOnTeamInvite     Boolean  @default(true)
+  smsOnCampaignDone     Boolean  @default(false)
+  smsOnLowCredits       Boolean  @default(true)
+  creditAlertThreshold  Decimal? @db.Decimal(12, 2)
+  updatedAt             DateTime @updatedAt
+  automationAlertsEmail Boolean  @default(true)
+  weeklyReportEmail     Boolean  @default(true)
+  account               Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("notification_prefs")
+}
+
+model CreditUsage {
+  id         String   @id @default(uuid())
+  accountId  String
+  userId     String?
+  channel    String   @db.VarChar(20)
+  source     String   @db.VarChar(20)
+  sourceId   String?  @db.VarChar(36)
+  sourceName String?  @db.VarChar(255)
+  contacts   Int      @default(1)
+  parts      Int      @default(1)
+  unitPrice  Decimal  @db.Decimal(10, 2)
+  totalCost  Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now()) @db.Timestamp(6)
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([accountId, createdAt(sort: Desc)])
+  @@index([accountId, userId, createdAt(sort: Desc)])
+  @@map("credit_usage")
+}
 
 enum CampaignVariant {
   A
@@ -81,543 +597,4 @@ enum AnalyticAction {
   Click
   Unsubscribe
   Bounce
-}
-// ============ MODELS ============
-
-model Account {
-  id                    String    @id @default(uuid())
-  companyName           String    @db.VarChar(255)
-  adminEmail            String    @unique @db.VarChar(255)
-  passwordHash          String    @db.VarChar(255)
-  country               String    @db.Char(3)
-  creditBalance         Decimal   @default(0) @db.Decimal(12,2)
-  alertThreshold        Decimal?  @db.Decimal(12,2)
-  creditLimit           Decimal?  @db.Decimal(12,2)
-  createdAt             DateTime  @default(now()) @db.Timestamp
-  gdprStatus            String    @default("active") @db.VarChar(50)
-  emailVerified         Boolean   @default(false)
-  confirmationToken     String?   @unique
-  tokenExpiry           DateTime?
-  resetPasswordToken    String?   @unique
-  resetPasswordExpiry   DateTime?
-  loginAttempts         Int       @default(0)
-  lockedUntil           DateTime?
-  twoFactorEnabled      Boolean   @default(false)
-  twoFactorCode         String?   @db.VarChar(10)
-  twoFactorCodeExpiry   DateTime?
-  twoFactorSecret       String?   @db.VarChar(64)
-  backupCodes           String[]  @default([])
-  onboardingCompleted   Boolean   @default(false)
-  logoUrl               String?   @db.VarChar(512)
-  avatarUrl             String?   @db.VarChar(512)
-  language              String    @default("fr") @db.VarChar(10)
-  timezone              String    @default("Africa/Abidjan") @db.VarChar(100)
-
-  users                 User[]
-  contacts              Contact[]
-  segments              Segment[]
-  campaigns             Campaign[]
-  automations           Automation[]
-  transactions          Transaction[]
-  mobileMoneyTransactions MobileMoneyTransaction[]
-  templates             Template[]
-  auditLogs             AuditLog[]
-  invitations           Invitation[]
-  importReports         ImportReport[]
-  jobs                  Job[]
-  providerConfigs       ProviderConfig[]
-  notificationPrefs     NotificationPrefs?
-  apiKeys               ApiKey[]
-  creditUsage           CreditUsage[]
-
-  @@map("accounts")
-}
-
-model User {
-  id              String    @id @default(uuid())
-  accountId       String
-  account         Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  email           String    @unique @db.VarChar(255)
-  passwordHash    String    @db.VarChar(255)
-  firstName       String?   @db.VarChar(100)
-  lastName        String?   @db.VarChar(100)
-  avatarUrl       String?   @db.VarChar(512)
-  role            UserRole  @default(Editor)
-  twoFactorEnabled Boolean  @default(false)
-  lastLogin       DateTime? @db.Timestamp
-
-  auditLogs       AuditLog[]
-  mobileMoneyTransactions MobileMoneyTransaction[]
-  creditUsage     CreditUsage[]
-
-  @@map("users")
-  @@index([accountId])
-}
-
-model Contact {
-  id          String   @id @default(uuid())
-  accountId   String
-  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  email       String?  @db.VarChar(255)
-  phone       String?  @db.VarChar(20)
-  firstName   String?  @db.VarChar(100)
-  lastName    String?  @db.VarChar(100)
-  location    String?  @db.VarChar(100)
-  tags        Json?
-  notes       Json?    @default("[]")
-  createdAt   DateTime @default(now()) @db.Timestamp
-  optOut      Boolean  @default(false)
-  optOutAt    DateTime? @db.Timestamp
-  anonymizedAt DateTime? @db.Timestamp
-
-  consents           Consent[]
-  sends              Send[]
-  analytics          Analytic[]
-  workflowExecutions WorkflowExecution[]  // ✅ Relation inverse ajoutée
-
-  @@index([accountId, email])
-  @@index([accountId, phone])
-  @@index([accountId, createdAt])
-  @@index([accountId, location])
-  @@index([accountId, optOut])
-  @@index([accountId, firstName])
-  @@index([accountId, lastName])
-  @@map("contacts")
-  @@unique([accountId, email])
-  @@unique([accountId, phone])
-}
-
-model Segment {
-  id             String    @id @default(uuid())
-  accountId      String
-  account        Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  name           String?   @db.VarChar(255)
-  type           String?   @db.VarChar(20)
-  criteria       Json?
-  contactCount   Int       @default(0)
-  lastCalculated DateTime? @db.Timestamp
-
-  campaigns      Campaign[]
-
-  @@index([accountId])
-  @@map("segments")
-}
-
-model Campaign {
-  id                String            @id @default(uuid())
-  accountId         String
-  account           Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
-
-  name              String            @default("Campagne") @db.VarChar(255)
-  channelType       String            @db.VarChar(20)
-  status            CampaignStatus    @default(DRAFT)
-
-  subject           String?           @db.VarChar(255)
-  subjectA          String?           @db.VarChar(255)
-  subjectB          String?           @db.VarChar(255)
-  content           String?           @db.Text
-  contentJson       Json?
-
-  abSplitPct        Int               @default(50)
-  abWinner          CampaignVariant?
-  abTestDuration    Int?
-
-  scheduledAt       DateTime?         @db.Timestamp
-  timezone          String            @default("Africa/Abidjan") @db.VarChar(50)
-  bestSendTime      Json?
-
-  estimatedCost     Decimal?          @db.Decimal(12,2)
-  estimatedRecipients Int             @default(0)
-  sentCount         Int               @default(0)
-  deliveredCount    Int               @default(0)
-  openedCount       Int               @default(0)
-  clickedCount      Int               @default(0)
-  failedCount       Int               @default(0)
-
-  sentCountA        Int               @default(0)
-  sentCountB        Int               @default(0)
-  openedCountA      Int               @default(0)
-  openedCountB      Int               @default(0)
-  clickedCountA     Int               @default(0)
-  clickedCountB     Int               @default(0)
-
-  segmentId         String?
-  segment           Segment?          @relation(fields: [segmentId], references: [id])
-  
-  // EN-1688: Message personalization variables
-  promoCode         String?           @db.VarChar(50)
-  
-  sends             Send[]
-  analytics         Analytic[]
-  engagementHeatmaps EngagementHeatmap[]
-  clickHeatmaps     ClickHeatmap[]
-  abResults         ABTestResult[]
-
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  images            CampaignImage[]
-  automations       Automation[]
-
-  @@index([accountId, status, channelType])
-  @@index([accountId, createdAt])
-  @@index([scheduledAt])
-  @@index([abWinner])
-  @@map("campaigns")
-}
-
-model Send {
-  id              String          @id @default(uuid())
-  campaignId      String
-  campaign        Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId       String
-  contact         Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
-
-  status          SendStatus      @default(PENDING)
-  variant         SendVariant     @default(NONE)
-
-  sentAt          DateTime?       @db.Timestamp
-  openedAt        DateTime?       @db.Timestamp
-  clickedAt       DateTime?       @db.Timestamp
-  deliveredAt     DateTime?       @db.Timestamp
-  bouncedReason   String?         @db.VarChar(255)
-
-  @@unique([campaignId, contactId])
-  @@index([contactId])
-  @@index([campaignId, variant])
-  @@index([campaignId, status])
-  @@index([campaignId, status, variant])
-  @@map("sends")
-}
-
-model CampaignImage {
-  id          String    @id @default(uuid())
-  campaignId  String
-  campaign    Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  fileName    String    @db.VarChar(255)
-  fileSize    Int
-  mimeType    String    @db.VarChar(100)
-  storageUrl  String    @db.Text
-  uploadedAt  DateTime  @default(now())
-
-  @@index([campaignId])
-  @@map("campaign_images")
-}
-
-model ABTestResult {
-  id          String          @id @default(uuid())
-  campaignId  String
-  campaign    Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  variant     CampaignVariant
-  sentCount   Int             @default(0)
-  openedCount Int             @default(0)
-  clickedCount Int            @default(0)
-  evaluatedAt DateTime?       @db.Timestamp
-
-  @@unique([campaignId, variant])
-  @@map("ab_test_results")
-}
-
-model Automation {
-  id             String          @id @default(uuid())
-  accountId      String
-  account        Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  name           String          @db.VarChar(255)
-  trigger        String          @db.VarChar(100)
-  triggerType    String          @default("contact_added") @db.VarChar(100)
-  triggerConfig  Json?
-  delaySeconds   Int             @default(0)
-  channel        String          @db.VarChar(20)
-  templateId     String?
-  template       Template?       @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  campaignId     String?
-  campaign       Campaign?       @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  workflow       Json?
-  status         AutomationStatus @default(Draft)
-  sendCount      Int             @default(0)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-
-  executions     WorkflowExecution[]
-
-  @@map("automations")
-  @@index([accountId, status])
-  @@index([campaignId])
-}
-
-model WorkflowExecution {
-  id            String          @id @default(uuid())
-  automationId  String
-  automation    Automation      @relation(fields: [automationId], references: [id], onDelete: Cascade)
-  contactId     String
-  contact       Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  currentNodeId String?         @db.VarChar(100)
-  status        String          @default("Running") @db.VarChar(20)
-  context       Json?
-  startedAt     DateTime        @default(now())
-  finishedAt    DateTime?
-
-  @@map("workflow_executions")
-  @@index([automationId, contactId])
-}
-
-model Transaction {
-  id         String           @id @default(uuid())
-  accountId  String
-  account    Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  amount     Decimal          @db.Decimal(12,2)
-  method     TransactionMethod?
-  reference  String?          @db.VarChar(255)
-  status     TransactionStatus @default(Pending)
-  createdAt  DateTime         @default(now()) @db.Timestamp
-
-  invoice    Invoice?
-
-  @@map("transactions")
-  @@index([accountId, createdAt])
-}
-
-model MobileMoneyTransaction {
-  id                    String    @id @db.VarChar(64)
-  accountId             String
-  account               Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  userId                String
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status                String    @db.VarChar(20)
-  operator              String    @db.VarChar(20)
-  phoneNumber           String    @db.VarChar(30)
-  amount                Decimal   @db.Decimal(12,2)
-  currency              String    @db.VarChar(10)
-  externalTransactionId String?   @db.VarChar(255)
-  createdAt             DateTime  @default(now()) @db.Timestamp
-  completedAt           DateTime? @db.Timestamp
-
-  @@index([accountId, createdAt])
-  @@index([userId, createdAt])
-  @@map("mobile_money_transactions")
-}
-
-model Template {
-  id           String   @id @default(uuid())
-  accountId    String
-  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  key          String   @unique @db.VarChar(255)
-  name         String?  @db.VarChar(255)
-  channelType  String?  @db.VarChar(20)
-  htmlContent  String?  @db.Text
-  contentText  String?  @db.Text
-  variables    Json?
-  createdBy    String?  @db.VarChar(255)
-  isPreset     Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  automations  Automation[]
-
-  @@map("templates")
-  @@index([accountId, isPreset])
-}
-
-model AuditLog {
-  id          String    @id @default(uuid())
-  accountId   String
-  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  userId      String?
-  user        User?     @relation(fields: [userId], references: [id])
-  action      String?   @db.VarChar(255)
-  details     Json?
-  ipAddress   String?   @db.VarChar(45)
-  userAgent   String?   @db.VarChar(512)
-  createdAt   DateTime  @default(now()) @db.Timestamp
-
-  @@map("audit_logs")
-  @@index([accountId, createdAt])
-}
-
-model Invitation {
-  id        String           @id @default(uuid())
-  accountId String
-  account   Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  email     String           @db.VarChar(255)
-  role      UserRole         @default(Editor)
-  token     String           @unique @db.VarChar(255)
-  expiresAt DateTime         @db.Timestamp
-  status    InvitationStatus @default(Sent)
-
-  @@map("invitations")
-  @@index([accountId, status])
-}
-
-model ImportReport {
-  id             String   @id @default(uuid())
-  accountId      String
-  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  fileName       String?  @db.VarChar(255)
-  totalRecords   Int?
-  successCount   Int?
-  duplicateCount Int?
-  errorCount     Int?
-  createdAt      DateTime @default(now()) @db.Timestamp
-
-  @@map("import_reports")
-  @@index([accountId, createdAt])
-}
-
-model Job {
-  id          String    @id @default(uuid())
-  type        String?   @db.VarChar(50)
-  accountId   String
-  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  status      JobStatus @default(Pending)
-  createdAt   DateTime  @default(now()) @db.Timestamp
-  finishedAt  DateTime? @db.Timestamp
-
-  @@map("jobs")
-  @@index([accountId, status])
-}
-
-model Analytic {
-  id          String         @id @default(uuid())
-  campaignId  String?
-  campaign    Campaign?      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contactId   String?
-  contact     Contact?       @relation(fields: [contactId], references: [id])
-  action      AnalyticAction?
-  createdAt   DateTime?      @db.Timestamp
-
-  @@map("analytics")
-  @@index([campaignId, action])
-  @@index([contactId, createdAt])
-}
-
-model EngagementHeatmap {
-  id          String @id @default(uuid())
-  campaignId  String
-  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  hour        Int    @db.SmallInt
-  openCount   Int    @default(0)
-  clickCount  Int    @default(0)
-
-  @@unique([campaignId, hour])
-  @@map("engagement_heatmap")
-}
-
-model ClickHeatmap {
-  id         String @id @default(uuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  zone       String? @db.VarChar(255)
-  clickCount Int    @default(0)
-
-  @@map("click_heatmap")
-  @@index([campaignId])
-}
-
-model Consent {
-  id           String   @id @default(uuid())
-  contactId    String
-  contact      Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  consentedAt  DateTime @default(now()) @db.Timestamp
-  source       String?  @db.VarChar(255)
-
-  @@map("consents")
-  @@index([contactId])
-}
-
-model Invoice {
-  id            String   @id @default(uuid())
-  transactionId String?  @unique
-  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  s3Path        String?  @db.VarChar(255)
-  createdAt     DateTime @default(now()) @db.Timestamp
-
-  @@map("invoices")
-}
-
-model ProviderConfig {
-  id          String   @id @default(uuid())
-  accountId   String
-  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  providerType String  @db.VarChar(50)  // "email" | "sms" | "whatsapp" | "payment" | "storage"
-  providerName String  @db.VarChar(50)  // "resend" | "brevo" | "twilio" | "africastalking" | "stripe"
-  isActive    Boolean  @default(false)
-  config      Json?                      // clés API chiffrées
-  createdAt   DateTime @default(now()) @db.Timestamp
-  updatedAt   DateTime @updatedAt
-
-  @@unique([accountId, providerType, providerName])
-  @@index([accountId, providerType])
-  @@map("provider_configs")
-}
-
-model ApiKey {
-  id          String      @id @default(uuid())
-  accountId   String
-  name        String      @db.VarChar(100)
-  keyHash     String      @unique @db.VarChar(64)
-  keyPrefix   String      @db.VarChar(20)
-  keySuffix   String      @db.VarChar(4)
-  permissions String[]    @default([])
-  lastUsedAt  DateTime?
-  expiresAt   DateTime?
-  createdAt   DateTime    @default(now()) @db.Timestamp
-  revokedAt   DateTime?
-  account     Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  logs        ApiKeyLog[]
-
-  @@map("api_keys")
-}
-
-model ApiKeyLog {
-  id          String   @id @default(uuid())
-  apiKeyId    String
-  accountId   String
-  endpoint    String   @db.VarChar(100)
-  method      String   @db.VarChar(10)
-  statusCode  Int      @default(200)
-  creditsUsed Decimal  @default(0) @db.Decimal(12, 2)
-  createdAt   DateTime @default(now()) @db.Timestamp
-  apiKey      ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
-
-  @@map("api_key_logs")
-  @@index([apiKeyId, createdAt(sort: Desc)])
-  @@index([accountId, createdAt(sort: Desc)])
-}
-
-model NotificationPrefs {
-  id                    String   @id @default(uuid())
-  accountId             String   @unique
-  account               Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  emailOnCampaignDone   Boolean  @default(true)
-  emailOnLowCredits     Boolean  @default(true)
-  emailOnTeamInvite     Boolean  @default(true)
-  smsOnCampaignDone     Boolean  @default(false)
-  smsOnLowCredits       Boolean  @default(true)
-  creditAlertThreshold  Decimal? @db.Decimal(12,2)
-  weeklyReportEmail     Boolean  @default(true)
-  automationAlertsEmail Boolean  @default(true)
-  updatedAt             DateTime @updatedAt
-
-  @@map("notification_prefs")
-}
-
-// Historique de chaque débit de crédits (campagne, automation, API publique)
-model CreditUsage {
-  id          String    @id @default(uuid())
-  accountId   String
-  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  userId      String?
-  user        User?     @relation(fields: [userId], references: [id])
-  channel     String    @db.VarChar(20)    // SMS | EMAIL | WHATSAPP
-  source      String    @db.VarChar(20)    // CAMPAIGN | AUTOMATION | API
-  sourceId    String?   @db.VarChar(36)    // uuid campagne ou automation
-  sourceName  String?   @db.VarChar(255)
-  contacts    Int       @default(1)
-  parts       Int       @default(1)
-  unitPrice   Decimal   @db.Decimal(10,2)
-  totalCost   Decimal   @db.Decimal(12,2)
-  createdAt   DateTime  @default(now()) @db.Timestamp
-
-  @@map("credit_usage")
-  @@index([accountId, createdAt(sort: Desc)])
-  @@index([accountId, userId, createdAt(sort: Desc)])
 }

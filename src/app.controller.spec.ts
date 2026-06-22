@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
+import { PrismaService } from './prisma/prisma.service';
 
 describe('AppController', () => {
   let appController: AppController;
@@ -19,6 +20,12 @@ describe('AppController', () => {
         {
           provide: SmsProviderFactory,
           useValue: { getHealthStatus: () => ({}) },
+        },
+        {
+          provide: PrismaService,
+          useValue: {
+            $queryRaw: jest.fn().mockResolvedValue([{ '?column?': 1 }]),
+          },
         },
       ],
     }).compile();

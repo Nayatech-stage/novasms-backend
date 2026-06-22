@@ -956,6 +956,61 @@ export class ContactsService {
       : [newNote];
   }
 
+  async getHistory(
+    accountId: string,
+    contactId: string,
+  ): Promise<
+    { id: string; type: string; message: string; createdAt: string }[]
+  > {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, accountId },
+      include: {
+        sends: {
+          include: { campaign: { select: { name: true } } },
+          orderBy: { sentAt: 'desc' },
+          take: 50,
+        },
+      },
+    });
+    if (!contact) throw new NotFoundException('Contact introuvable');
+
+    const items: {
+      id: string;
+      type: string;
+      message: string;
+      createdAt: string;
+    }[] = [];
+
+    for (const send of contact.sends) {
+      if (!send.sentAt) continue;
+      items.push({
+        id: send.campaignId + '-' + contactId,
+        type: 'campaign',
+        message: `Campagne "${send.campaign.name}" — statut: ${send.status.toLowerCase()}`,
+        createdAt: send.sentAt.toISOString(),
+      });
+    }
+
+    const notes = Array.isArray(contact.notes)
+      ? (contact.notes as { id: string; content: string; createdAt: string }[])
+      : [];
+    for (const note of notes) {
+      items.push({
+        id: note.id,
+        type: 'note',
+        message: note.content,
+        createdAt: note.createdAt,
+      });
+    }
+
+    items.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    return items;
+  }
+
   private async invalidateContactCountCache(accountId: string) {
     try {
       await redisConnection.del(`contacts:count:${accountId}`);

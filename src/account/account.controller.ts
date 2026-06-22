@@ -322,8 +322,11 @@ export class AccountController {
       },
     });
 
-    // TODO: envoyer email d'invitation via MailService
-    // await this.mail.sendInvitationEmail(invitation.email, token);
+    await this.mail.sendInvitationEmail(
+      invitation.email,
+      token,
+      req.user.email,
+    );
 
     return { success: true, invitation };
   }

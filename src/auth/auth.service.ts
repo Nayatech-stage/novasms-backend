@@ -5,6 +5,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,6 +34,8 @@ type AuthAccount = {
   twoFactorCode: string | null;
   twoFactorCodeExpiry: Date | null;
   twoFactorSecret: string | null;
+  twoFactorEnabled: boolean;
+  twoFactorPhone: string | null;
   backupCodes?: string[];
   onboardingCompleted: boolean;
 };
@@ -259,7 +262,7 @@ export class AuthService {
     });
 
     if (!account) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect');
+      return this.loginAsMember(normalizedEmail, password);
     }
 
     if (!account.emailVerified) {
@@ -328,22 +331,60 @@ export class AuthService {
       data: { loginAttempts: 0, lockedUntil: null },
     });
 
-    // 2FA si active: authenticator TOTP + backup codes uniquement
+    // 2FA TOTP (application Authenticator)
     if (primaryUser.twoFactorEnabled) {
       const twoFactorToken = this.generateTwoFactorToken(authAccount);
-
-      // cleanup legacy email-based 2FA fields
       await this.prisma.account.update({
         where: { id: authAccount.id },
         data: { twoFactorCode: null, twoFactorCodeExpiry: null },
       });
-
       return {
         success: true,
         requiresTwoFactor: true,
         twoFactorToken,
         message:
-          'Entrez le code de votre application Authenticator ou un backup code.',
+          'Entrez le code de votre application Authenticator ou un code de secours.',
+        account: {
+          id: authAccount.id,
+          email: authAccount.adminEmail,
+          name: authAccount.companyName,
+          role: primaryUser.role,
+          sector: authAccount.sector,
+          primaryChannels: authAccount.primaryChannels,
+          onboardingCompleted: authAccount.onboardingCompleted,
+        },
+      };
+    }
+
+    // 2FA SMS (OTP par SMS)
+    if (authAccount.twoFactorEnabled && authAccount.twoFactorPhone) {
+      const code = randomInt(100000, 1000000).toString();
+      const expiry = new Date(Date.now() + 10 * 60 * 1000);
+      await this.prisma.account.update({
+        where: { id: authAccount.id },
+        data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
+      });
+      try {
+        const smsProvider = this.smsProviderFactory.getProvider();
+        await smsProvider.send(
+          authAccount.twoFactorPhone,
+          `Votre code NovaSMS : ${code}. Valable 10 min.`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `2FA SMS login send failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      const maskedPhone = authAccount.twoFactorPhone.replace(
+        /(\d{2})\d+(\d{2})$/,
+        '$1****$2',
+      );
+      const twoFactorToken = this.generateTwoFactorToken(authAccount);
+      return {
+        success: true,
+        requiresTwoFactor: true,
+        twoFactorToken,
+        message: `Code OTP envoyé par SMS au ${maskedPhone}.`,
         account: {
           id: authAccount.id,
           email: authAccount.adminEmail,
@@ -367,6 +408,47 @@ export class AuthService {
         email: authAccount.adminEmail,
         name: authAccount.companyName,
         role: primaryUser.role,
+        sector: authAccount.sector,
+        primaryChannels: authAccount.primaryChannels,
+        onboardingCompleted: authAccount.onboardingCompleted,
+      },
+    };
+  }
+
+  private async loginAsMember(email: string, password: string) {
+    const memberUser = await this.prisma.user.findUnique({
+      where: { email },
+      include: { account: true },
+    });
+
+    if (!memberUser || !memberUser.passwordHash) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect');
+    }
+
+    const isPasswordValid = await this.verifyPassword(
+      password,
+      memberUser.passwordHash,
+    );
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect');
+    }
+
+    const authAccount = memberUser.account as unknown as AuthAccount;
+    const tokens = this.generateTokens(
+      authAccount,
+      memberUser.role as UserRole,
+      memberUser.email,
+    );
+
+    return {
+      success: true,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      account: {
+        id: authAccount.id,
+        email: memberUser.email,
+        name: authAccount.companyName,
+        role: memberUser.role,
         sector: authAccount.sector,
         primaryChannels: authAccount.primaryChannels,
         onboardingCompleted: authAccount.onboardingCompleted,
@@ -410,7 +492,11 @@ export class AuthService {
     const authAccount = account as unknown as AuthAccount;
     const primaryUser = await this.getPrimaryUser(authAccount);
 
-    if (!primaryUser.twoFactorEnabled) {
+    const totpActive = primaryUser.twoFactorEnabled;
+    const smsActive =
+      authAccount.twoFactorEnabled && !!authAccount.twoFactorPhone;
+
+    if (!totpActive && !smsActive) {
       throw new UnauthorizedException(
         'La double authentification est désactivée',
       );
@@ -423,7 +509,7 @@ export class AuthService {
     const matchedBackupCode = backupCodes.find((bc) => bc === normalizedCode);
 
     let isTotpValid = false;
-    if (authAccount.twoFactorSecret) {
+    if (totpActive && authAccount.twoFactorSecret) {
       isTotpValid = speakeasy.totp.verify({
         secret: authAccount.twoFactorSecret,
         encoding: 'base32',
@@ -432,7 +518,19 @@ export class AuthService {
       });
     }
 
-    if (!isTotpValid && !matchedBackupCode) {
+    let isSmsValid = false;
+    if (
+      smsActive &&
+      authAccount.twoFactorCode &&
+      authAccount.twoFactorCodeExpiry
+    ) {
+      const now = new Date();
+      isSmsValid =
+        now < authAccount.twoFactorCodeExpiry &&
+        normalizedCode === authAccount.twoFactorCode;
+    }
+
+    if (!isTotpValid && !matchedBackupCode && !isSmsValid) {
       throw new UnauthorizedException('Code de vérification incorrect');
     }
 
@@ -675,10 +773,14 @@ export class AuthService {
     return await bcrypt.compare(plainPassword, hash);
   }
 
-  private generateTokens(account: AuthAccount, role: UserRole): AuthTokens {
+  private generateTokens(
+    account: AuthAccount,
+    role: UserRole,
+    emailOverride?: string,
+  ): AuthTokens {
     const payload = {
       sub: account.id,
-      email: account.adminEmail,
+      email: emailOverride ?? account.adminEmail,
       accountId: account.id,
       role,
       onboardingCompleted: account.onboardingCompleted,
@@ -736,7 +838,7 @@ export class AuthService {
     if (!account) throw new BadRequestException('Account not found');
 
     const secret = speakeasy.generateSecret({
-      name: `NovaSMS (${account.adminEmail})`,
+      name: `NovaSMS:${account.adminEmail}`,
       issuer: 'NovaSMS',
       length: 32,
     }) as { base32: string; otpauth_url: string };
@@ -833,12 +935,97 @@ export class AuthService {
       where: { id: account.id },
       data: {
         twoFactorSecret: null,
+        twoFactorEnabled: false,
+        twoFactorPhone: null,
         backupCodes: [],
         twoFactorCode: null,
         twoFactorCodeExpiry: null,
       },
     });
     return { success: true, message: '2FA désactivée' };
+  }
+
+  async sendTwoFactorSmsSetup(accountId: string, phone: string) {
+    if (!accountId) throw new BadRequestException('accountId requis');
+    if (!phone || phone.replace(/\D/g, '').length < 8) {
+      throw new BadRequestException('Numéro de téléphone invalide');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
+    if (!account) throw new BadRequestException('Compte introuvable');
+
+    const code = randomInt(100000, 1000000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
+    });
+
+    try {
+      const smsProvider = this.smsProviderFactory.getProvider();
+      await smsProvider.send(
+        phone,
+        `NovaSMS - Code de vérification : ${code}. Valable 10 min.`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `2FA SMS setup send failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.logger.debug(`2FA setup code for ${account.adminEmail}: ${code}`);
+    }
+
+    return { success: true, message: 'Code envoyé par SMS' };
+  }
+
+  async enableTwoFactorSms(accountId: string, phone: string, code: string) {
+    if (!accountId || !phone || !code) {
+      throw new BadRequestException('Paramètres manquants');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: {
+        id: true,
+        adminEmail: true,
+        twoFactorCode: true,
+        twoFactorCodeExpiry: true,
+      },
+    });
+    if (!account) throw new BadRequestException('Compte introuvable');
+
+    if (!account.twoFactorCode || !account.twoFactorCodeExpiry) {
+      throw new BadRequestException(
+        "Aucun code en attente — envoyez d'abord un code",
+      );
+    }
+    if (new Date() > account.twoFactorCodeExpiry) {
+      throw new BadRequestException('Code expiré — renvoyez un nouveau code');
+    }
+    if (code.trim() !== account.twoFactorCode) {
+      throw new UnauthorizedException('Code incorrect');
+    }
+
+    const backupCodes = this.generateBackupCodes(10);
+
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorPhone: phone,
+        backupCodes,
+        twoFactorCode: null,
+        twoFactorCodeExpiry: null,
+      },
+    });
+
+    return {
+      success: true,
+      message: '2FA SMS activée',
+      backup_codes: backupCodes,
+    };
   }
 
   async sendTwoFactorSms(accountId: string, _phone?: string) {
@@ -897,6 +1084,8 @@ export class AuthService {
         creditBalance: true,
         backupCodes: true,
         twoFactorSecret: true,
+        twoFactorEnabled: true,
+        twoFactorPhone: true,
         onboardingCompleted: true,
         passwordHash: true,
       },
@@ -916,9 +1105,15 @@ export class AuthService {
       twoFactorCode: null,
       twoFactorCodeExpiry: null,
       twoFactorSecret: account.twoFactorSecret,
+      twoFactorEnabled: account.twoFactorEnabled,
+      twoFactorPhone: account.twoFactorPhone,
       backupCodes: account.backupCodes,
       onboardingCompleted: account.onboardingCompleted,
     });
+
+    const maskedPhone = account.twoFactorPhone
+      ? account.twoFactorPhone.replace(/(\d{2})\d+(\d{2})$/, '$1****$2')
+      : null;
 
     return {
       success: true,
@@ -927,7 +1122,10 @@ export class AuthService {
         sector: null,
         primaryChannels: [],
         role: user.role,
-        twoFactorEnabled: user.twoFactorEnabled,
+        totpEnabled: user.twoFactorEnabled,
+        smsEnabled: account.twoFactorEnabled,
+        twoFactorEnabled: user.twoFactorEnabled || account.twoFactorEnabled,
+        twoFactorPhone: maskedPhone,
       },
     };
   }
@@ -973,6 +1171,57 @@ export class AuthService {
   }
 
   // ✅ Nouvelle méthode: normaliser string → UserRole enum
+  async getInvitationInfo(token: string) {
+    if (!token) throw new BadRequestException('Token manquant');
+    const inv = await this.prisma.invitation.findFirst({
+      where: { token, status: 'Sent', expiresAt: { gt: new Date() } },
+      include: { account: { select: { companyName: true } } },
+    });
+    if (!inv) throw new NotFoundException('Invitation invalide ou expirée');
+    return {
+      email: inv.email,
+      role: inv.role,
+      companyName: inv.account.companyName,
+    };
+  }
+
+  async acceptInvitation(token: string, password: string) {
+    if (!token || !password || password.length < 8) {
+      throw new BadRequestException(
+        'Token et mot de passe (8 car. min) requis',
+      );
+    }
+    const inv = await this.prisma.invitation.findFirst({
+      where: { token, status: 'Sent', expiresAt: { gt: new Date() } },
+    });
+    if (!inv) throw new NotFoundException('Invitation invalide ou expirée');
+
+    const existing = await this.prisma.user.findFirst({
+      where: { email: inv.email, accountId: inv.accountId },
+    });
+    if (existing)
+      throw new BadRequestException('Cet email est déjà membre du compte');
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    await this.prisma.$transaction([
+      this.prisma.user.create({
+        data: {
+          email: inv.email,
+          accountId: inv.accountId,
+          role: inv.role,
+          passwordHash,
+        },
+      }),
+      this.prisma.invitation.update({
+        where: { id: inv.id },
+        data: { status: 'Accepted' },
+      }),
+    ]);
+
+    return { success: true };
+  }
+
   private normalizeRoleToEnum(role?: string): UserRole | undefined {
     if (!role) return undefined;
 

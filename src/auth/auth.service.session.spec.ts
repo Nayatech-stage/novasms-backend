@@ -18,6 +18,7 @@ const mockPrisma = {
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
 };
 
@@ -277,6 +278,8 @@ describe('AuthService — sessions, refresh et 2FA (US-002 / EN-1635 / EN-1641)'
         where: { id: 'acc-1' },
         data: {
           twoFactorSecret: null,
+          twoFactorEnabled: false,
+          twoFactorPhone: null,
           backupCodes: [],
           twoFactorCode: null,
           twoFactorCodeExpiry: null,

@@ -1,6 +1,4 @@
 import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
-import { calculateSendCost } from '../common/billing.util';
-
 import { Logger } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -65,12 +63,7 @@ export class CampaignScheduleProcessor extends WorkerHost {
       return { success: false, reason: 'quiet-hours-deferred' };
     }
 
-    const nbContacts = campaign.estimatedRecipients || 0;
-    const realCost = calculateSendCost(
-      campaign.channelType,
-      nbContacts,
-      campaign.content ?? '',
-    ).total;
+    const realCost = Number(campaign.estimatedCost ?? 0);
 
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },

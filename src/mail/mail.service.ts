@@ -359,4 +359,53 @@ export class MailService {
       }
     }
   }
+
+  async sendInvitationEmail(email: string, token: string, invitedBy: string) {
+    const inviteUrl = `${resolvePublicFrontendUrl()}/accept-invitation/${token}`;
+    const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
+    const subject = `Invitation à rejoindre l'équipe NovaSMS`;
+    const htmlContent = `
+      <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px;text-align:center">
+        <h1 style="color:#2EC80A">Vous êtes invité !</h1>
+        <p><strong>${invitedBy}</strong> vous invite à rejoindre son espace NovaSMS.</p>
+        <a href="${inviteUrl}" style="display:inline-block;background:#2EC80A;color:#fff;padding:14px 28px;text-decoration:none;border-radius:8px;font-weight:bold;margin:20px 0">Accepter l'invitation</a>
+        <p style="font-size:13px;color:#666;margin-top:20px">Ou copiez ce lien : <a href="${inviteUrl}" style="color:#2EC80A">${inviteUrl}</a></p>
+        <p style="font-size:12px;color:#999;margin-top:20px">Ce lien est valide 7 jours. Si vous n'attendiez pas cette invitation, ignorez cet email.</p>
+      </div>
+    `;
+
+    if (this.transporter) {
+      try {
+        await this.transporter.sendMail({
+          from,
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+        this.logger.log(`Invitation envoyée à ${email} (DEV)`);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Erreur invitation SMTP: ${(error as Error).message}`,
+        );
+      }
+      return;
+    }
+
+    if (this.resend) {
+      try {
+        const result = await this.resend.emails.send({
+          from,
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+        if (result.error) throw new Error(result.error.message);
+        this.logger.log(`Invitation envoyée à ${email} (Resend)`);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Erreur Resend invitation: ${(error as Error).message}`,
+        );
+      }
+    }
+  }
 }

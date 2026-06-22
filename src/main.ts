@@ -55,12 +55,47 @@ async function bootstrap() {
 
   const config = new DocumentBuilder()
     .setTitle('NovaSMS API')
-    .setDescription('API documentation for NovaSMS platform')
+    .setDescription(
+      [
+        '## NovaSMS Integration API',
+        '',
+        '### Authentication',
+        'All `/api/v1/*` routes require an API key:',
+        '`Authorization: Bearer nvsms_xxx` or `X-Api-Key: nvsms_xxx`',
+        '',
+        'Create your keys in **Settings -> API Keys**.',
+        '',
+        '### Limits',
+        '- 60 requests/minute per key',
+        '- 500 recipients max per SMS call',
+        '- 10 active keys per account',
+      ].join('\n'),
+    )
     .setVersion('1.0')
     .addTag('Authentification')
+    .addTag(
+      'API Publique v1',
+      'Routes accessible via NovaSMS API key (nvsms_...)',
+    )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'nvsms_...',
+        description: 'NovaSMS API key (Settings -> API Keys)',
+        in: 'header',
+      },
+      'api-key',
+    )
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
+      'JWT',
+    )
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('api/docs', app, document, {
+    swaggerOptions: { persistAuthorization: true, tagsSorter: 'alpha' },
+  });
 
   // 🔧 Initialize import worker after app creation
   try {

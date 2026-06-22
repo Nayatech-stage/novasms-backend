@@ -532,7 +532,8 @@ describe('CampaignsService — bestSendTime et coût SMS', () => {
     const { service } = makeHarness();
     const gsm = service.calculateSmsCost('a'.repeat(161), 10);
     expect(gsm.parts).toBe(2);
-    expect(gsm.cost).toBeCloseTo(2 * 10 * 0.015);
+    // 2 parties × 10 contacts × 12 FCFA = 240 FCFA
+    expect(gsm.cost).toBe(2 * 10 * 12);
 
     const unicode = service.calculateSmsCost('é€'.repeat(40) + '😀', 1);
     expect(unicode.parts).toBeGreaterThanOrEqual(2);

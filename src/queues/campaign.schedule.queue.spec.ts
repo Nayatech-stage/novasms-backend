@@ -25,6 +25,7 @@ describe('CampaignScheduleProcessor — déclenchement planifié (US-009/EN-1657
   const baseCampaign = {
     id: 'camp-1',
     accountId: 'acc-1',
+    channelType: 'EMAIL',
     status: CampaignStatus.SCHEDULED,
     subjectB: null,
     estimatedCost: 100,

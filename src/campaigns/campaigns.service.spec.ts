@@ -48,7 +48,10 @@ describe('CampaignsService A/B flow', () => {
         createMany: jest.fn().mockResolvedValue({ count: 10 }),
       },
       account: {
-        findUnique: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue({ creditBalance: 99999 }),
+      },
+      creditUsage: {
+        create: jest.fn().mockResolvedValue({}),
       },
     };
 

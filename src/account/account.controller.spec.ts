@@ -53,7 +53,9 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
     jest.clearAllMocks();
     controller = new AccountController(
       prisma as unknown as PrismaService,
-      {} as unknown as MailService,
+      {
+        sendInvitationEmail: jest.fn().mockResolvedValue(undefined),
+      } as unknown as MailService,
     );
   });
 

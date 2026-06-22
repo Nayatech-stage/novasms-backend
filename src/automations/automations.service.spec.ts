@@ -79,6 +79,9 @@ describe('AutomationsService', () => {
     auditLog: {
       create: jest.fn(),
     },
+    creditUsage: {
+      create: jest.fn(),
+    },
     $transaction: jest.fn(async (operations) => Promise.all(operations)),
     $executeRaw: jest.fn().mockResolvedValue(1),
   };
@@ -563,9 +566,9 @@ describe('AutomationsService', () => {
     // tagged template: args are (strings[], cost, accountId, cost)
     expect(prisma.$executeRaw).toHaveBeenCalledWith(
       expect.any(Array),
-      1, // CREDIT_COST_PER_EMAIL par defaut = 1 FCFA
+      2, // CREDIT_COST_PER_EMAIL par defaut = 2 FCFA
       'acc-credit',
-      1,
+      2,
     );
   });
 
@@ -612,9 +615,9 @@ describe('AutomationsService', () => {
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
     expect(prisma.$executeRaw).toHaveBeenCalledWith(
       expect.any(Array),
-      5, // CREDIT_COST_PER_SMS par defaut = 5 FCFA
+      12, // CREDIT_COST_PER_SMS par defaut = 12 FCFA
       'acc-sms',
-      5,
+      12,
     );
   });
 

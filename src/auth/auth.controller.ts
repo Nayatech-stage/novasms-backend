@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Get,
   Param,
+  Query,
   UseGuards,
   BadRequestException,
   Req,
@@ -192,15 +193,32 @@ export class AuthController {
 
   @Post('send-2fa-sms')
   @UseGuards(JwtAuthGuard)
-  @ApiOperation({ summary: 'Envoyer un code 2FA par SMS (placeholder)' })
-  async sendTwoFactorSms(
+  @ApiOperation({ summary: 'Envoyer un code OTP par SMS (configuration 2FA)' })
+  async sendTwoFactorSmsSetup(
     @Tenant() accountId: string | null,
-    @Body() body: { phone?: string },
+    @Body() body: { phone: string },
   ) {
-    if (!accountId) {
+    if (!accountId)
       throw new BadRequestException('Utilisateur non authentifié');
-    }
-    return this.authService.sendTwoFactorSms(accountId, body.phone);
+    return this.authService.sendTwoFactorSmsSetup(accountId, body.phone);
+  }
+
+  @Post('enable-2fa-sms')
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Activer la 2FA par SMS après vérification du code OTP',
+  })
+  async enableTwoFactorSms(
+    @Tenant() accountId: string | null,
+    @Body() body: { phone: string; code: string },
+  ) {
+    if (!accountId)
+      throw new BadRequestException('Utilisateur non authentifié');
+    return this.authService.enableTwoFactorSms(
+      accountId,
+      body.phone,
+      body.code,
+    );
   }
 
   @Get('me')
@@ -211,5 +229,21 @@ export class AuthController {
       throw new BadRequestException('Utilisateur non authentifié');
     }
     return this.authService.getAccount(accountId);
+  }
+
+  @Get('invitation')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Infos d'une invitation par token (public)" })
+  async getInvitationInfo(@Query('token') token: string) {
+    return this.authService.getInvitationInfo(token);
+  }
+
+  @Post('invitation/accept')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Accepter une invitation et créer le compte membre',
+  })
+  async acceptInvitation(@Body() body: { token: string; password: string }) {
+    return this.authService.acceptInvitation(body.token, body.password);
   }
 }

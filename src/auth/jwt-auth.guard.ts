@@ -17,6 +17,8 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       ['POST', '/api/auth/resend-confirmation'],
       ['POST', '/api/auth/verify-2fa'],
       ['POST', '/api/auth/refresh'],
+      ['GET', '/api/auth/invitation'],
+      ['POST', '/api/auth/invitation/accept'],
     ] as const;
 
     const requestPath = request.path ?? request.url ?? '';

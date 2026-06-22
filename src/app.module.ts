@@ -4,6 +4,7 @@ import { AppService } from './app.service';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TenantInterceptor } from './common/interceptors/tenant.interceptor';
 import { ConfigModule } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule'; // ✅ Ajouter cet import
 import { BullModule } from '@nestjs/bullmq';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -22,6 +23,8 @@ import { AccountModule } from './account/account.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { SegmentsModule } from './segments/segments.module';
 import { TrackModule } from './track/track.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
+import { PublicApiModule } from './public-api/public-api.module';
 import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 import { WhatsappProviderFactory } from './providers/whatsapp/whatsapp.provider.factory';
@@ -34,6 +37,7 @@ const isTestEnvironment =
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),
     ...(isTestEnvironment ? [] : [ScheduleModule.forRoot()]),
     EventEmitterModule.forRoot(),
     BullModule.forRoot({
@@ -60,6 +64,8 @@ const isTestEnvironment =
     SegmentsModule,
     TrackModule,
     WebhookModule,
+    ApiKeysModule,
+    PublicApiModule,
   ],
   controllers: [AppController],
   providers: [

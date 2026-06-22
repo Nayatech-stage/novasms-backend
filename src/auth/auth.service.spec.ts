@@ -173,11 +173,49 @@ describe('AuthService -- US-001 & US-002', () => {
       );
     });
 
-    it('leve UnauthorizedException si email inconnu', async () => {
+    it('leve UnauthorizedException si email inconnu (admin et membre)', async () => {
       mockPrisma.account.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockResolvedValue(null);
       await expect(service.login('unknown@test.ci', 'pass')).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+
+    it('connecte un membre invite (Editor) via son propre email', async () => {
+      const memberWithAccount = {
+        id: 'usr-2',
+        accountId: 'acc-1',
+        email: 'editor@boutique.ci',
+        passwordHash: HASHED_PASSWORD,
+        role: 'Editor',
+        twoFactorEnabled: false,
+        account: {
+          id: 'acc-1',
+          adminEmail: 'admin@boutique.ci',
+          companyName: 'Test Boutique',
+          passwordHash: HASHED_PASSWORD,
+          emailVerified: true,
+          loginAttempts: 0,
+          lockedUntil: null,
+          twoFactorCode: null,
+          twoFactorCodeExpiry: null,
+          twoFactorSecret: null,
+          sector: null,
+          primaryChannels: [],
+          onboardingCompleted: false,
+        },
+      };
+      mockPrisma.account.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockResolvedValue(memberWithAccount);
+      const result = await service.login(
+        'editor@boutique.ci',
+        'SecurePass123!',
+      );
+      expect(result.success).toBe(true);
+      const token = (result as any).accessToken ?? (result as any).access_token;
+      expect(token).toBeDefined();
+      expect((result as any).account.role).toBe('Editor');
+      expect((result as any).account.email).toBe('editor@boutique.ci');
     });
 
     it('bloque le compte apres 5 tentatives echouees', async () => {

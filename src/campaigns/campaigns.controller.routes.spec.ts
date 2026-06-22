@@ -219,10 +219,12 @@ describe('CampaignsController — routes campagnes (US-007/US-008/US-009)', () =
         res,
       );
 
-      expect(service.sendCampaign).toHaveBeenCalledWith('acc-1', 'camp-1', {
-        immediateOrScheduled: 'immediate',
-        scheduledAt: undefined,
-      });
+      expect(service.sendCampaign).toHaveBeenCalledWith(
+        'acc-1',
+        'camp-1',
+        { immediateOrScheduled: 'immediate', scheduledAt: undefined },
+        undefined,
+      );
       expect(status).toHaveBeenCalledWith(201);
       expect(json).toHaveBeenCalledWith(
         expect.objectContaining({ success: true, status: 'SENDING' }),

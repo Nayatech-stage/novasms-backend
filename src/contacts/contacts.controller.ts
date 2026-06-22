@@ -233,6 +233,15 @@ export class ContactsController {
     return { success: true, status: state };
   }
 
+  @Get(':id/history')
+  @ApiOperation({ summary: "Historique d'un contact (campagnes + notes)" })
+  async getHistory(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    const data = await this.contactsService.getHistory(accountId, id);
+    return { data };
+  }
+
   @Get(':id/export')
   @ApiOperation({ summary: 'Exporter un contact en CSV ou JSON' })
   async exportContact(

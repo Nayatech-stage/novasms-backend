@@ -20,7 +20,8 @@ const mockAuthService = {
   generateTwoFactorSecret: jest.fn().mockResolvedValue({ secret: 'totp' }),
   enableTwoFactor: jest.fn().mockResolvedValue({ enabled: true }),
   disableTwoFactor: jest.fn().mockResolvedValue({ disabled: true }),
-  sendTwoFactorSms: jest.fn().mockResolvedValue({ sent: true }),
+  sendTwoFactorSmsSetup: jest.fn().mockResolvedValue({ success: true }),
+  enableTwoFactorSms: jest.fn().mockResolvedValue({ success: true }),
   getAccount: jest.fn().mockResolvedValue({ id: 'acc-1' }),
 };
 
@@ -193,14 +194,32 @@ describe('AuthController', () => {
     expect(mockAuthService.disableTwoFactor).toHaveBeenCalledWith('acc-1');
   });
 
-  it('sendTwoFactorSms exige un accountId puis délègue', async () => {
+  it('sendTwoFactorSmsSetup exige un accountId puis délègue', async () => {
     await expect(
-      controller.sendTwoFactorSms(null, { phone: '+225070000' }),
+      controller.sendTwoFactorSmsSetup(null, { phone: '+225070000' }),
     ).rejects.toThrow(BadRequestException);
-    await controller.sendTwoFactorSms('acc-1', { phone: '+225070000' });
-    expect(mockAuthService.sendTwoFactorSms).toHaveBeenCalledWith(
+    await controller.sendTwoFactorSmsSetup('acc-1', { phone: '+225070000' });
+    expect(mockAuthService.sendTwoFactorSmsSetup).toHaveBeenCalledWith(
       'acc-1',
       '+225070000',
+    );
+  });
+
+  it('enableTwoFactorSms exige un accountId puis délègue', async () => {
+    await expect(
+      controller.enableTwoFactorSms(null, {
+        phone: '+225070000',
+        code: '123456',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    await controller.enableTwoFactorSms('acc-1', {
+      phone: '+225070000',
+      code: '123456',
+    });
+    expect(mockAuthService.enableTwoFactorSms).toHaveBeenCalledWith(
+      'acc-1',
+      '+225070000',
+      '123456',
     );
   });
 
