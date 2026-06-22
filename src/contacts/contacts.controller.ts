@@ -13,7 +13,12 @@ import {
   Query,
   Request,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import ExcelJS from 'exceljs';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -92,6 +97,67 @@ export class ContactsController {
       dateAddedFrom: q.dateAddedFrom,
       dateAddedTo: q.dateAddedTo,
     });
+  }
+
+  @Post('import/parse-excel')
+  @ApiOperation({
+    summary: 'Parser un fichier XLS/XLSX et retourner les lignes (max 50 000)',
+  })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  async parseExcel(@UploadedFile() file: Express.Multer.File) {
+    if (!file) throw new BadRequestException('Fichier manquant');
+
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    if (!['xls', 'xlsx'].includes(ext ?? '')) {
+      throw new BadRequestException(
+        'Format non supporté. Utilisez XLS ou XLSX.',
+      );
+    }
+
+    const LIMIT = 50_000;
+    const workbook = new ExcelJS.Workbook();
+    try {
+      // exceljs déclare son propre type Buffer (extends ArrayBuffer) — conversion nécessaire
+      const ab = file.buffer.buffer.slice(
+        file.buffer.byteOffset,
+        file.buffer.byteOffset + file.buffer.byteLength,
+      );
+      await workbook.xlsx.load(ab as unknown as ArrayBuffer);
+    } catch {
+      throw new BadRequestException(
+        'Impossible de lire ce fichier Excel. Enregistrez-le au format .xlsx et réessayez.',
+      );
+    }
+
+    const sheet = workbook.worksheets[0];
+    if (!sheet) throw new BadRequestException('Classeur vide');
+
+    const headerRow = sheet.getRow(1);
+    const headers: string[] = [];
+    headerRow.eachCell((cell) => {
+      headers.push(String(cell.value ?? '').trim());
+    });
+
+    if (headers.length === 0)
+      throw new BadRequestException('En-têtes introuvables');
+
+    const rows: Record<string, unknown>[] = [];
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || rows.length >= LIMIT) return;
+      const obj: Record<string, unknown> = {};
+      headers.forEach((h, idx) => {
+        const cell = row.getCell(idx + 1);
+        obj[h] = cell.value ?? '';
+      });
+      rows.push(obj);
+    });
+
+    return {
+      headers,
+      rows,
+      preview: rows.slice(0, 5),
+      totalRows: rows.length,
+    };
   }
 
   @Post('import')

@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Logger,
 } from '@nestjs/common';
+import * as ExcelJS from 'exceljs';
 import {
   AutomationStatus,
   CampaignStatus,
@@ -456,6 +457,104 @@ export class ContactsService {
     });
 
     return headers.join(',') + '\n' + escapedValues.join(',');
+  }
+
+  private static readonly EXPORT_HEADERS = [
+    { key: 'id', label: 'ID' },
+    { key: 'email', label: 'Email' },
+    { key: 'phone', label: 'Téléphone' },
+    { key: 'firstName', label: 'Prénom' },
+    { key: 'lastName', label: 'Nom' },
+    { key: 'location', label: 'Localisation' },
+    { key: 'tags', label: 'Tags' },
+    { key: 'optOut', label: 'Désabonné' },
+    { key: 'createdAt', label: 'Date création' },
+  ];
+
+  private static readonly EXPORT_LIMIT = 50_000;
+
+  async exportAll(
+    accountId: string,
+    format: 'csv' | 'xlsx',
+  ): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const contacts = await this.prisma.contact.findMany({
+      where: { accountId },
+      orderBy: { createdAt: 'desc' },
+      take: ContactsService.EXPORT_LIMIT,
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        location: true,
+        tags: true,
+        optOut: true,
+        createdAt: true,
+      },
+    });
+
+    const rows = contacts.map((c) => ({
+      id: c.id,
+      email: c.email ?? '',
+      phone: c.phone ?? '',
+      firstName: c.firstName ?? '',
+      lastName: c.lastName ?? '',
+      location: c.location ?? '',
+      tags: Array.isArray(c.tags) ? (c.tags as string[]).join(';') : '',
+      optOut: c.optOut ? 'Oui' : 'Non',
+      createdAt: new Date(c.createdAt).toISOString(),
+    }));
+
+    const date = new Date().toISOString().slice(0, 10);
+
+    if (format === 'csv') {
+      const escapeCell = (v: string) =>
+        v.includes(',') || v.includes('"') || v.includes('\n')
+          ? `"${v.replace(/"/g, '""')}"`
+          : v;
+
+      const headerLine = ContactsService.EXPORT_HEADERS.map(
+        (h) => h.label,
+      ).join(',');
+      const lines = rows.map((r) =>
+        ContactsService.EXPORT_HEADERS.map((h) =>
+          escapeCell(String(r[h.key as keyof typeof r] ?? '')),
+        ).join(','),
+      );
+      const csv = [headerLine, ...lines].join('\n');
+      return {
+        buffer: Buffer.from('﻿' + csv, 'utf-8'),
+        contentType: 'text/csv; charset=utf-8',
+        fileName: `contacts-${date}.csv`,
+      };
+    }
+
+    // XLSX via exceljs
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'NovaSMS';
+    workbook.created = new Date();
+    const sheet = workbook.addWorksheet('Contacts');
+
+    sheet.columns = ContactsService.EXPORT_HEADERS.map((h) => ({
+      header: h.label,
+      key: h.key,
+      width: 22,
+    }));
+
+    sheet.getRow(1).font = { bold: true };
+
+    for (const row of rows) {
+      sheet.addRow(row);
+    }
+
+    const xlsxBuffer = await workbook.xlsx.writeBuffer();
+    return {
+      buffer: Buffer.from(xlsxBuffer),
+      contentType:
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      fileName: `contacts-${date}.xlsx`,
+    };
   }
 
   // ✅ CORRECTION: Ajouter try-catch pour éviter les 500
@@ -991,8 +1090,9 @@ export class ContactsService {
       });
     }
 
-    const notes = Array.isArray(contact.notes)
-      ? (contact.notes as { id: string; content: string; createdAt: string }[])
+    const rawNotes = (contact as Record<string, unknown>).notes;
+    const notes = Array.isArray(rawNotes)
+      ? (rawNotes as { id: string; content: string; createdAt: string }[])
       : [];
     for (const note of notes) {
       items.push({
