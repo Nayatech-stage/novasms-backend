@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { importQueue } from '../queues/import.queue';
@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as readline from 'readline';
+import { randomUUID } from 'crypto';
+import ExcelJS from 'exceljs';
 
 export type ImportRow = {
   email?: string;
@@ -323,5 +325,107 @@ export class ImportService {
         errorCount: report.errorCount,
       },
     };
+  }
+
+  async parseExcelFile(file: Express.Multer.File): Promise<{
+    headers: string[];
+    rows: Record<string, unknown>[];
+    preview: Record<string, unknown>[];
+    totalRows: number;
+  }> {
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    if (!['xls', 'xlsx'].includes(ext ?? '')) {
+      throw new BadRequestException(
+        'Format non supporté. Utilisez XLS ou XLSX.',
+      );
+    }
+
+    const LIMIT = 50_000;
+    const workbook = new ExcelJS.Workbook();
+    try {
+      const ab = file.buffer.buffer.slice(
+        file.buffer.byteOffset,
+        file.buffer.byteOffset + file.buffer.byteLength,
+      );
+      await workbook.xlsx.load(ab as unknown as ArrayBuffer);
+    } catch {
+      throw new BadRequestException(
+        'Impossible de lire ce fichier Excel. Enregistrez-le au format .xlsx et réessayez.',
+      );
+    }
+
+    const sheet = workbook.worksheets[0];
+    if (!sheet) throw new BadRequestException('Classeur vide');
+
+    const headers: string[] = [];
+    sheet.getRow(1).eachCell((cell) => {
+      headers.push(String(cell.value ?? '').trim());
+    });
+    if (headers.length === 0)
+      throw new BadRequestException('En-têtes introuvables');
+
+    const rows: Record<string, unknown>[] = [];
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || rows.length >= LIMIT) return;
+      const obj: Record<string, unknown> = {};
+      headers.forEach((h, idx) => {
+        obj[h] = row.getCell(idx + 1).value ?? '';
+      });
+      rows.push(obj);
+    });
+
+    return { headers, rows, preview: rows.slice(0, 5), totalRows: rows.length };
+  }
+
+  async initChunkImport(accountId: string): Promise<string> {
+    const fileId = randomUUID();
+    const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, `${fileId}.ndjson`), '');
+    return fileId;
+  }
+
+  async appendChunk(
+    accountId: string,
+    fileId: string,
+    rows: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    const filePath = path.join(
+      os.tmpdir(),
+      'novasms-imports',
+      accountId,
+      `${fileId}.ndjson`,
+    );
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      throw new BadRequestException('fileId introuvable');
+    }
+    const lines = rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    await fs.promises.appendFile(filePath, lines, { encoding: 'utf8' });
+  }
+
+  async finalizeChunkImport(
+    accountId: string,
+    fileId: string,
+    fileName: string,
+  ): Promise<{ jobId: string }> {
+    const filePath = path.join(
+      os.tmpdir(),
+      'novasms-imports',
+      accountId,
+      `${fileId}.ndjson`,
+    );
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      throw new BadRequestException('fileId introuvable');
+    }
+    const result = await this.startImportFromFile(
+      accountId,
+      fileName,
+      filePath,
+    );
+    return { jobId: result.jobId };
   }
 }

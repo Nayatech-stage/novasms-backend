@@ -20,6 +20,10 @@ function stripeSignatureHeader(body: string, secret: string): string {
 
 // ─── Shared mock ────────────────────────────────────────────────────────────
 
+// Les méthodes de vérification HMAC utilisent la vraie implémentation
+// (elles ne dépendent pas de prisma/mailService/eventEmitter)
+const realService = new (WebhookService as any)(null, null, null);
+
 const mockWebhookService = {
   receiveWebhook: jest.fn().mockResolvedValue({
     id: 'wh-1',
@@ -32,6 +36,28 @@ const mockWebhookService = {
   receiveResendWebhook: jest.fn().mockResolvedValue({ id: 'wh-2' }),
   receiveSmsWebhook: jest.fn().mockResolvedValue({ id: 'wh-3' }),
   receiveStripeWebhook: jest.fn().mockResolvedValue({ id: 'wh-4' }),
+  assertProviderSignature: (
+    provider: string,
+    secret: string | undefined,
+    headers: Record<string, string | string[]>,
+    req: any,
+    payload: unknown,
+    headerKeys: string[],
+  ) =>
+    realService.assertProviderSignature(
+      provider,
+      secret,
+      headers,
+      req,
+      payload,
+      headerKeys,
+    ),
+  assertStripeSignature: (
+    secret: string | undefined,
+    headers: Record<string, string | string[]>,
+    req: any,
+    payload: unknown,
+  ) => realService.assertStripeSignature(secret, headers, req, payload),
 };
 
 // ─── Suite ──────────────────────────────────────────────────────────────────

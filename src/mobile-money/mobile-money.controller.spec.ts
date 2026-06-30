@@ -3,7 +3,11 @@ import { MobileMoneyController } from './mobile-money.controller';
 import { MobileMoneyService } from './mobile-money.service';
 
 describe('MobileMoneyController — validation opérateurs CI (RG-46/RG-47)', () => {
-  const service = {
+  // Utilise la vraie implémentation de validatePayment (pas de dépendances injectées)
+  const realValidate = MobileMoneyService.prototype.validatePayment;
+
+  const service: any = {
+    validatePayment: jest.fn(),
     initiateTransaction: jest.fn(),
     confirmTransaction: jest.fn(),
     pollTransactionStatus: jest.fn(),
@@ -20,8 +24,10 @@ describe('MobileMoneyController — validation opérateurs CI (RG-46/RG-47)', ()
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new MobileMoneyController(
-      service as unknown as MobileMoneyService,
+    // validatePayment utilise la logique réelle (OPERATOR_RULES)
+    service.validatePayment.mockImplementation(
+      (op: string, phone: string, amount: number) =>
+        realValidate.call(service, op, phone, amount),
     );
     service.initiateTransaction.mockResolvedValue({
       id: 'MM-1',
@@ -29,6 +35,9 @@ describe('MobileMoneyController — validation opérateurs CI (RG-46/RG-47)', ()
       paymentUrl: null,
       reference: null,
     });
+    controller = new MobileMoneyController(
+      service as unknown as MobileMoneyService,
+    );
   });
 
   describe('initiateTransaction — bornes de montant', () => {
@@ -50,7 +59,7 @@ describe('MobileMoneyController — validation opérateurs CI (RG-46/RG-47)', ()
       ).rejects.toThrow('maximum');
     });
 
-    it('refuse un numéro qui n’a pas 10 chiffres', async () => {
+    it("refuse un numéro qui n'a pas 10 chiffres", async () => {
       await expect(
         controller.initiateTransaction(
           { ...base, phoneNumber: '+225 07 01 02' },
@@ -59,7 +68,7 @@ describe('MobileMoneyController — validation opérateurs CI (RG-46/RG-47)', ()
       ).rejects.toThrow('10 digits');
     });
 
-    it('refuse un préfixe non compatible avec l’opérateur', async () => {
+    it("refuse un préfixe non compatible avec l'opérateur", async () => {
       await expect(
         controller.initiateTransaction(
           // 41 = préfixe Moov, pas Wave

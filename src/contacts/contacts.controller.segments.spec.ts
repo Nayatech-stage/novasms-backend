@@ -27,6 +27,9 @@ describe('ContactsController — segments et import par chunks', () => {
     startImport: jest.fn(),
     processFullImportFromFile: jest.fn(),
     startImportFromFile: jest.fn(),
+    initChunkImport: jest.fn(),
+    appendChunk: jest.fn(),
+    finalizeChunkImport: jest.fn(),
   };
 
   const req = { accountId: 'acc-1' } as never;
@@ -36,6 +39,9 @@ describe('ContactsController — segments et import par chunks', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    importService.initChunkImport.mockResolvedValue('file-uuid-123');
+    importService.appendChunk.mockResolvedValue(undefined);
+    importService.finalizeChunkImport.mockResolvedValue({ jobId: 'job-123' });
     controller = new ContactsController(
       importService as unknown as ImportService,
       contactsService as unknown as ContactsService,
@@ -51,10 +57,11 @@ describe('ContactsController — segments et import par chunks', () => {
       );
     });
 
-    it('startImport crée un fileId et le fichier temporaire', async () => {
+    it('startImport crée un fileId via le service', async () => {
       const result = await controller.startImport(req);
       expect(result.success).toBe(true);
-      expect(result.fileId).toBeTruthy();
+      expect(result.fileId).toBe('file-uuid-123');
+      expect(importService.initChunkImport).toHaveBeenCalledWith('acc-1');
     });
 
     it('uploadImportChunk rejette fileId/rows manquants', async () => {
@@ -76,6 +83,9 @@ describe('ContactsController — segments et import par chunks', () => {
     });
 
     it('uploadImportChunk rejette un fileId inconnu', async () => {
+      importService.appendChunk.mockRejectedValueOnce(
+        new BadRequestException('fileId introuvable'),
+      );
       await expect(
         controller.uploadImportChunk(
           { fileId: 'inexistant', rows: [{ a: 1 }] },
@@ -91,6 +101,9 @@ describe('ContactsController — segments et import par chunks', () => {
         req,
       );
       expect(result).toEqual({ success: true });
+      expect(importService.appendChunk).toHaveBeenCalledWith('acc-1', fileId, [
+        { telephone: '+2250700000001' },
+      ]);
     });
 
     it('completeImport rejette sans accountId ou sans fileId', async () => {
@@ -106,6 +119,9 @@ describe('ContactsController — segments et import par chunks', () => {
     });
 
     it('completeImport rejette un fileId inconnu', async () => {
+      importService.finalizeChunkImport.mockRejectedValueOnce(
+        new BadRequestException('fileId introuvable'),
+      );
       await expect(
         controller.completeImport(
           { fileId: 'inexistant', fileName: 'f.csv' },
@@ -115,20 +131,16 @@ describe('ContactsController — segments et import par chunks', () => {
     });
 
     it('completeImport lance le traitement streaming (fileName par défaut)', async () => {
-      importService.startImportFromFile.mockResolvedValue({
-        success: true,
-        jobId: 'job-123',
-      });
       const { fileId } = await controller.startImport(req);
       const result = await controller.completeImport(
         { fileId, fileName: '' },
         req,
       );
       expect(result).toEqual({ success: true, jobId: 'job-123' });
-      expect(importService.startImportFromFile).toHaveBeenCalledWith(
+      expect(importService.finalizeChunkImport).toHaveBeenCalledWith(
         'acc-1',
+        fileId,
         `import-${fileId}.ndjson`,
-        expect.stringContaining(`${fileId}.ndjson`),
       );
     });
   });
@@ -140,7 +152,7 @@ describe('ContactsController — segments et import par chunks', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('retourne introuvable si le job n’existe pas', async () => {
+    it("retourne introuvable si le job n'existe pas", async () => {
       getJobMock.mockResolvedValue(null);
       await expect(controller.getImportStatus('j-1', req)).resolves.toEqual({
         success: false,
@@ -160,7 +172,7 @@ describe('ContactsController — segments et import par chunks', () => {
       });
     });
 
-    it('retourne l’état courant pour un job en cours', async () => {
+    it("retourne l'état courant pour un job en cours", async () => {
       getJobMock.mockResolvedValue({
         getState: jest.fn().mockResolvedValue('active'),
       });
@@ -324,7 +336,7 @@ describe('ContactsController — segments et import par chunks', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('deleteSegment lève NotFound si rien n’est supprimé', async () => {
+    it("deleteSegment lève NotFound si rien n'est supprimé", async () => {
       contactsService.deleteSegment.mockResolvedValue(false);
       await expect(controller.deleteSegment('s-404', req)).rejects.toThrow(
         NotFoundException,

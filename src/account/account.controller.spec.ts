@@ -1,36 +1,26 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import * as bcrypt from 'bcryptjs';
-import { Decimal } from '@prisma/client/runtime/library';
 import { AccountController } from './account.controller';
-import { PrismaService } from '../prisma/prisma.service';
-import { MailService } from '../mail/mail.service';
+import { AccountService } from './account.service';
 
 type TenantRequest = Parameters<AccountController['getMe']>[0];
 
 describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
-  const prisma = {
-    user: {
-      findFirst: jest.fn(),
-      findMany: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    },
-    account: {
-      findUnique: jest.fn(),
-      update: jest.fn(),
-    },
-    notificationPrefs: {
-      findUnique: jest.fn(),
-      upsert: jest.fn(),
-    },
-    invitation: {
-      findMany: jest.fn(),
-      findFirst: jest.fn(),
-      create: jest.fn(),
-      delete: jest.fn(),
-    },
-    contact: { findMany: jest.fn() },
-    campaign: { findMany: jest.fn() },
+  const accountService = {
+    getMe: jest.fn(),
+    getProfile: jest.fn(),
+    updateProfile: jest.fn(),
+    updateSettings: jest.fn(),
+    getNotificationPrefs: jest.fn(),
+    updateNotificationPrefs: jest.fn(),
+    getTeam: jest.fn(),
+    inviteMember: jest.fn(),
+    revokeMember: jest.fn(),
+    cancelInvitation: jest.fn(),
+    changePassword: jest.fn(),
+    getBalance: jest.fn(),
+    exportAccountData: jest.fn(),
+    getCreditUsageSummary: jest.fn(),
+    getCreditUsageHistory: jest.fn(),
   };
 
   const req = {
@@ -52,10 +42,7 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     controller = new AccountController(
-      prisma as unknown as PrismaService,
-      {
-        sendInvitationEmail: jest.fn().mockResolvedValue(undefined),
-      } as unknown as MailService,
+      accountService as unknown as AccountService,
     );
   });
 
@@ -67,31 +54,34 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
     });
 
     it('retourne le profil utilisateur avec son compte', async () => {
-      prisma.user.findFirst.mockResolvedValue({
+      const user = {
         id: 'user-1',
         email: 'admin@novasms.ci',
         role: 'Admin',
         account: { id: 'acc-1', companyName: 'Boutique' },
-      });
+      };
+      accountService.getMe.mockResolvedValue(user);
 
       const result = await controller.getMe(req);
 
       expect(result.success).toBe(true);
-      expect(prisma.user.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { email: 'admin@novasms.ci', accountId: 'acc-1' },
-        }),
+      expect(result.user).toEqual(user);
+      expect(accountService.getMe).toHaveBeenCalledWith(
+        'acc-1',
+        'admin@novasms.ci',
       );
     });
 
     it('lève NotFound pour un utilisateur inconnu', async () => {
-      prisma.user.findFirst.mockResolvedValue(null);
+      accountService.getMe.mockRejectedValue(
+        new NotFoundException('Utilisateur introuvable'),
+      );
 
       await expect(controller.getMe(req)).rejects.toThrow(NotFoundException);
     });
 
     it('getProfile retourne le compte boutique', async () => {
-      prisma.account.findUnique.mockResolvedValue({
+      accountService.getProfile.mockResolvedValue({
         id: 'acc-1',
         companyName: 'Boutique Awa',
       });
@@ -104,33 +94,42 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
 
   describe('updateSettings — alertes budget (US-016)', () => {
     it('refuse une limite supérieure au solde', async () => {
-      prisma.account.findUnique.mockResolvedValue({
-        creditBalance: new Decimal(1000),
-      });
+      accountService.updateSettings.mockRejectedValue(
+        new BadRequestException(
+          "La limite d'utilisation ne peut pas dépasser le solde actuel",
+        ),
+      );
 
       await expect(
         controller.updateSettings(req, { creditLimit: 5000 }),
       ).rejects.toThrow('dépasser le solde');
     });
 
-    it('met à jour le seuil d’alerte', async () => {
-      prisma.account.update.mockResolvedValue({});
+    it("met à jour le seuil d'alerte", async () => {
+      accountService.updateSettings.mockResolvedValue(undefined);
 
       const result = await controller.updateSettings(req, {
         alertThreshold: 500,
       });
 
       expect(result).toEqual({ success: true });
-      expect(prisma.account.update).toHaveBeenCalledWith({
-        where: { id: 'acc-1' },
-        data: { alertThreshold: 500 },
+      expect(accountService.updateSettings).toHaveBeenCalledWith('acc-1', {
+        alertThreshold: 500,
       });
     });
   });
 
   describe('notification-prefs', () => {
     it('retourne les valeurs par défaut sans préférences enregistrées', async () => {
-      prisma.notificationPrefs.findUnique.mockResolvedValue(null);
+      accountService.getNotificationPrefs.mockResolvedValue({
+        emailOnCampaignDone: true,
+        emailOnLowCredits: true,
+        emailOnTeamInvite: true,
+        smsOnCampaignDone: false,
+        smsOnLowCredits: true,
+        weeklyReportEmail: true,
+        automationAlertsEmail: true,
+      });
 
       const result = await controller.getNotificationPrefs(req);
 
@@ -141,25 +140,25 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
     });
 
     it('upsert uniquement les booléens fournis', async () => {
-      prisma.notificationPrefs.upsert.mockResolvedValue({});
+      accountService.updateNotificationPrefs.mockResolvedValue(undefined);
 
       await controller.updateNotificationPrefs(req, {
         emailOnLowCredits: false,
       });
 
-      const call = prisma.notificationPrefs.upsert.mock.calls[0][0];
-      expect(call.update).toEqual({ emailOnLowCredits: false });
-      expect(call.create).toMatchObject({
-        accountId: 'acc-1',
-        emailOnLowCredits: false,
-      });
+      expect(accountService.updateNotificationPrefs).toHaveBeenCalledWith(
+        'acc-1',
+        { emailOnLowCredits: false },
+      );
     });
   });
 
   describe('équipe — invitation/révocation (US-015)', () => {
     it('liste membres et invitations', async () => {
-      prisma.user.findMany.mockResolvedValue([{ id: 'user-1' }]);
-      prisma.invitation.findMany.mockResolvedValue([]);
+      accountService.getTeam.mockResolvedValue({
+        users: [{ id: 'user-1' }],
+        invitations: [],
+      });
 
       const result = await controller.getTeam(req);
 
@@ -168,13 +167,19 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
     });
 
     it('refuse une invitation sans email', async () => {
+      accountService.inviteMember.mockRejectedValue(
+        new BadRequestException('Email requis'),
+      );
+
       await expect(
         controller.inviteMember(req, { email: '  ', role: 'Editor' }),
       ).rejects.toThrow('Email requis');
     });
 
     it('refuse un email déjà membre', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'user-2' });
+      accountService.inviteMember.mockRejectedValue(
+        new BadRequestException("Cet email fait déjà partie de l'équipe"),
+      );
 
       await expect(
         controller.inviteMember(req, {
@@ -184,11 +189,14 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
       ).rejects.toThrow("déjà partie de l'équipe");
     });
 
-    it('crée une invitation avec rôle validé et expiration 7 jours', async () => {
-      prisma.user.findFirst.mockResolvedValue(null);
-      prisma.invitation.create.mockImplementation(({ data }) =>
-        Promise.resolve({ id: 'inv-1', ...data }),
-      );
+    it('crée une invitation et retourne success', async () => {
+      const invitation = {
+        id: 'inv-1',
+        email: 'nouveau@novasms.ci',
+        role: 'Editor',
+        status: 'Sent',
+      };
+      accountService.inviteMember.mockResolvedValue(invitation);
 
       const result = await controller.inviteMember(req, {
         email: 'nouveau@novasms.ci',
@@ -196,49 +204,55 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
       });
 
       expect(result.success).toBe(true);
-      const data = prisma.invitation.create.mock.calls[0][0].data;
-      // rôle invalide → Editor par défaut
-      expect(data.role).toBe('Editor');
-      expect(data.status).toBe('Sent');
-      const sevenDays = 7 * 24 * 60 * 60 * 1000;
-      expect(
-        Math.abs(data.expiresAt.getTime() - (Date.now() + sevenDays)),
-      ).toBeLessThan(5000);
+      expect(result.invitation).toEqual(invitation);
+      expect(accountService.inviteMember).toHaveBeenCalledWith(
+        'acc-1',
+        'admin@novasms.ci',
+        { email: 'nouveau@novasms.ci', role: 'role-bidon' },
+      );
     });
 
     it('révoque un membre du compte uniquement', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 'user-2' });
-      prisma.user.delete.mockResolvedValue({});
+      accountService.revokeMember.mockResolvedValue(undefined);
 
       const result = await controller.revokeMember(req, 'user-2');
 
       expect(result).toEqual({ success: true });
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
-        where: { id: 'user-2', accountId: 'acc-1' },
-      });
+      expect(accountService.revokeMember).toHaveBeenCalledWith(
+        'acc-1',
+        'user-2',
+      );
     });
 
     it("refuse de révoquer un membre d'un autre compte", async () => {
-      prisma.user.findFirst.mockResolvedValue(null);
+      accountService.revokeMember.mockRejectedValue(
+        new NotFoundException('Membre introuvable'),
+      );
 
       await expect(controller.revokeMember(req, 'user-x')).rejects.toThrow(
         NotFoundException,
       );
-      expect(prisma.user.delete).not.toHaveBeenCalled();
     });
 
     it('annule une invitation du compte', async () => {
-      prisma.invitation.findFirst.mockResolvedValue({ id: 'inv-1' });
-      prisma.invitation.delete.mockResolvedValue({});
+      accountService.cancelInvitation.mockResolvedValue(undefined);
 
       const result = await controller.cancelInvitation(req, 'inv-1');
 
       expect(result).toEqual({ success: true });
+      expect(accountService.cancelInvitation).toHaveBeenCalledWith(
+        'acc-1',
+        'inv-1',
+      );
     });
   });
 
   describe('changePassword', () => {
     it('exige les deux mots de passe', async () => {
+      accountService.changePassword.mockRejectedValue(
+        new BadRequestException('Mot de passe actuel et nouveau requis'),
+      );
+
       await expect(
         controller.changePassword(req, {
           currentPassword: '',
@@ -248,6 +262,12 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
     });
 
     it('refuse un nouveau mot de passe trop court', async () => {
+      accountService.changePassword.mockRejectedValue(
+        new BadRequestException(
+          'Le mot de passe doit contenir au moins 8 caractères',
+        ),
+      );
+
       await expect(
         controller.changePassword(req, {
           currentPassword: 'ancien',
@@ -257,11 +277,9 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
     });
 
     it('refuse un mot de passe actuel incorrect', async () => {
-      const hash = await bcrypt.hash('le-bon-mdp', 4);
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'user-1',
-        passwordHash: hash,
-      });
+      accountService.changePassword.mockRejectedValue(
+        new BadRequestException('Mot de passe actuel incorrect'),
+      );
 
       await expect(
         controller.changePassword(req, {
@@ -271,13 +289,8 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
       ).rejects.toThrow('incorrect');
     });
 
-    it('hash et enregistre le nouveau mot de passe', async () => {
-      const hash = await bcrypt.hash('le-bon-mdp', 4);
-      prisma.user.findFirst.mockResolvedValue({
-        id: 'user-1',
-        passwordHash: hash,
-      });
-      prisma.user.update.mockResolvedValue({});
+    it('délègue le changement au service et retourne success', async () => {
+      accountService.changePassword.mockResolvedValue(undefined);
 
       const result = await controller.changePassword(req, {
         currentPassword: 'le-bon-mdp',
@@ -285,17 +298,19 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
       });
 
       expect(result).toEqual({ success: true });
-      const newHash = prisma.user.update.mock.calls[0][0].data.passwordHash;
-      expect(newHash).not.toBe('nouveaumdp1'); // jamais en clair
-      expect(await bcrypt.compare('nouveaumdp1', newHash)).toBe(true);
+      expect(accountService.changePassword).toHaveBeenCalledWith(
+        'acc-1',
+        'admin@novasms.ci',
+        { currentPassword: 'le-bon-mdp', newPassword: 'nouveaumdp1' },
+      );
     });
   });
 
   describe('getBalance', () => {
     it('retourne solde, seuil et limite convertis en nombres', async () => {
-      prisma.account.findUnique.mockResolvedValue({
-        creditBalance: new Decimal(2500),
-        alertThreshold: new Decimal(500),
+      accountService.getBalance.mockResolvedValue({
+        balance: 2500,
+        alertThreshold: 500,
         creditLimit: null,
         language: 'fr',
         timezone: 'Africa/Abidjan',
@@ -316,11 +331,12 @@ describe('AccountController — compte, équipe, RGPD (US-015/US-016)', () => {
 
   describe('export RGPD (EN-1682)', () => {
     it('exporte compte, contacts et campagnes en JSON téléchargeable', async () => {
-      prisma.account.findUnique.mockResolvedValue({
-        companyName: 'Boutique',
+      accountService.exportAccountData.mockResolvedValue({
+        exportedAt: '2026-06-30T00:00:00.000Z',
+        account: { companyName: 'Boutique' },
+        contacts: [{ id: 'ct-1' }],
+        campaigns: [{ id: 'camp-1' }],
       });
-      prisma.contact.findMany.mockResolvedValue([{ id: 'ct-1' }]);
-      prisma.campaign.findMany.mockResolvedValue([{ id: 'camp-1' }]);
 
       const setHeader = jest.fn();
       const json = jest.fn();

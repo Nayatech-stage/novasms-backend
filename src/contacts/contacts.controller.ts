@@ -18,7 +18,6 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
-import ExcelJS from 'exceljs';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -33,10 +32,6 @@ import {
 } from './contacts.service';
 import { ImportService } from './import.service';
 import { importQueue } from '../queues/import.queue';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { randomUUID } from 'crypto';
 
 import { SegmentCreateSchema, SegmentPreviewSchema } from './dto/segment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -106,58 +101,7 @@ export class ContactsController {
   @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
   async parseExcel(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Fichier manquant');
-
-    const ext = file.originalname.split('.').pop()?.toLowerCase();
-    if (!['xls', 'xlsx'].includes(ext ?? '')) {
-      throw new BadRequestException(
-        'Format non supporté. Utilisez XLS ou XLSX.',
-      );
-    }
-
-    const LIMIT = 50_000;
-    const workbook = new ExcelJS.Workbook();
-    try {
-      // exceljs déclare son propre type Buffer (extends ArrayBuffer) — conversion nécessaire
-      const ab = file.buffer.buffer.slice(
-        file.buffer.byteOffset,
-        file.buffer.byteOffset + file.buffer.byteLength,
-      );
-      await workbook.xlsx.load(ab as unknown as ArrayBuffer);
-    } catch {
-      throw new BadRequestException(
-        'Impossible de lire ce fichier Excel. Enregistrez-le au format .xlsx et réessayez.',
-      );
-    }
-
-    const sheet = workbook.worksheets[0];
-    if (!sheet) throw new BadRequestException('Classeur vide');
-
-    const headerRow = sheet.getRow(1);
-    const headers: string[] = [];
-    headerRow.eachCell((cell) => {
-      headers.push(String(cell.value ?? '').trim());
-    });
-
-    if (headers.length === 0)
-      throw new BadRequestException('En-têtes introuvables');
-
-    const rows: Record<string, unknown>[] = [];
-    sheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1 || rows.length >= LIMIT) return;
-      const obj: Record<string, unknown> = {};
-      headers.forEach((h, idx) => {
-        const cell = row.getCell(idx + 1);
-        obj[h] = cell.value ?? '';
-      });
-      rows.push(obj);
-    });
-
-    return {
-      headers,
-      rows,
-      preview: rows.slice(0, 5),
-      totalRows: rows.length,
-    };
+    return this.importService.parseExcelFile(file);
   }
 
   @Post('import')
@@ -209,12 +153,7 @@ export class ContactsController {
   async startImport(@Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    const fileId = randomUUID();
-    const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
-    await fs.promises.mkdir(dir, { recursive: true });
-    const filePath = path.join(dir, `${fileId}.ndjson`);
-    // create empty file
-    await fs.promises.writeFile(filePath, '');
+    const fileId = await this.importService.initChunkImport(accountId);
     return { success: true, fileId };
   }
 
@@ -229,18 +168,7 @@ export class ContactsController {
     if (!accountId) throw new BadRequestException('accountId manquant');
     if (!body.fileId || !Array.isArray(body.rows))
       throw new BadRequestException('fileId ou rows manquant');
-
-    const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
-    const filePath = path.join(dir, `${body.fileId}.ndjson`);
-    try {
-      await fs.promises.access(filePath);
-    } catch (e) {
-      throw new BadRequestException('fileId introuvable');
-    }
-
-    // Append each row as JSON line
-    const lines = body.rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
-    await fs.promises.appendFile(filePath, lines, { encoding: 'utf8' });
+    await this.importService.appendChunk(accountId, body.fileId, body.rows);
     return { success: true };
   }
 
@@ -256,20 +184,11 @@ export class ContactsController {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     if (!body.fileId) throw new BadRequestException('fileId manquant');
-
-    const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
-    const filePath = path.join(dir, `${body.fileId}.ndjson`);
-    try {
-      await fs.promises.access(filePath);
-    } catch (e) {
-      throw new BadRequestException('fileId introuvable');
-    }
-
     const fileName = body.fileName || `import-${body.fileId}.ndjson`;
-    const result = await this.importService.startImportFromFile(
+    const result = await this.importService.finalizeChunkImport(
       accountId,
+      body.fileId,
       fileName,
-      filePath,
     );
     return { success: true, jobId: result.jobId };
   }
@@ -284,18 +203,16 @@ export class ContactsController {
     if (!accountId) throw new BadRequestException('accountId manquant');
 
     const job = await importQueue.getJob(jobId);
-    if (!job) {
-      return { success: false, message: 'Job introuvable' };
-    }
+    if (!job) return { success: false, message: 'Job introuvable' };
 
     const state = await job.getState();
-    // If completed, try to return the job return value if available
     if (state === 'completed') {
-      // job.returnvalue may contain the report if the worker returned it
-      const report = job.returnvalue || null;
-      return { success: true, status: 'completed', report };
+      return {
+        success: true,
+        status: 'completed',
+        report: job.returnvalue || null,
+      };
     }
-
     return { success: true, status: state };
   }
 
@@ -317,14 +234,12 @@ export class ContactsController {
   ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-
     const data = await this.contactsService.exportContact(
       accountId,
       id,
       format,
     );
     if (!data) throw new NotFoundException('Contact non trouvé');
-
     return {
       success: true,
       format,
@@ -351,6 +266,7 @@ export class ContactsController {
     if (!accountId) throw new BadRequestException('accountId manquant');
     return this.contactsService.create(accountId, body);
   }
+
   @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Patch(':id')
   @ApiOperation({ summary: 'Mettre a jour un contact' })
@@ -406,6 +322,7 @@ export class ContactsController {
   }
 
   // --- Segments ---
+
   @Post('segments/preview')
   @ApiOperation({ summary: 'Apercu segment' })
   @ApiResponse({
@@ -435,7 +352,6 @@ export class ContactsController {
   async listSegments(@Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    // ✅ CORRECTION: ajouter la clé 'data' avant await
     return { data: await this.contactsService.listSegments(accountId) };
   }
 
@@ -500,7 +416,6 @@ export class ContactsController {
   ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-
     try {
       const count = await this.contactsService.countSegmentContacts(
         accountId,
@@ -549,7 +464,6 @@ export class ContactsController {
   ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-
     const updated = await this.contactsService.updateSegment(
       accountId,
       id,
@@ -559,11 +473,7 @@ export class ContactsController {
       segmentId: id,
       name: updated.name,
     });
-
-    return {
-      success: true,
-      segment: updated,
-    };
+    return { success: true, segment: updated };
   }
 
   @RequireRoles(UserRole.Admin, UserRole.Editor)

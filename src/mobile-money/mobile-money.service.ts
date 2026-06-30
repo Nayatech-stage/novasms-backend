@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { randomInt } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -38,6 +38,41 @@ type InitiateTransactionParams = {
   customerName?: string;
 };
 
+type OperatorKey = 'WAVE' | 'ORANGE' | 'MOMO' | 'MOOV';
+
+const OPERATOR_RULES: Record<
+  OperatorKey,
+  { min: number; max: number; prefixes: string[] }
+> = {
+  WAVE: { min: 500, max: 500_000, prefixes: ['01', '05', '07', '27'] },
+  ORANGE: {
+    min: 500,
+    max: 300_000,
+    prefixes: [
+      '05',
+      '07',
+      '25',
+      '45',
+      '47',
+      '57',
+      '65',
+      '67',
+      '77',
+      '87',
+      '97',
+    ],
+  },
+  MOMO: { min: 500, max: 500_000, prefixes: ['05', '25', '45', '65'] },
+  MOOV: { min: 500, max: 300_000, prefixes: ['01', '41', '61'] },
+};
+
+export const OPERATOR_MESSAGES: Record<OperatorKey, string> = {
+  WAVE: 'Ouvrez votre application Wave pour confirmer le paiement.',
+  ORANGE: 'Paiement Orange Money en cours de traitement.',
+  MOMO: 'Confirmez le paiement via votre application MTN MoMo ou composez *133#.',
+  MOOV: 'Confirmez le paiement via Moov Money ou composez *155#.',
+};
+
 @Injectable()
 export class MobileMoneyService {
   private readonly logger = new Logger(MobileMoneyService.name);
@@ -46,6 +81,38 @@ export class MobileMoneyService {
     private prisma: PrismaService,
     private paymentProviderFactory: PaymentProviderFactory,
   ) {}
+
+  validatePayment(operator: string, phoneNumber: string, amount: number): void {
+    const rules = OPERATOR_RULES[operator as OperatorKey];
+    const min = rules?.min ?? 500;
+    const max = rules?.max ?? 1_000_000;
+
+    if (amount < min) {
+      throw new BadRequestException(
+        `Amount minimum for ${operator}: ${min} XOF`,
+      );
+    }
+    if (amount > max) {
+      throw new BadRequestException(
+        `Amount maximum for ${operator}: ${max} XOF`,
+      );
+    }
+
+    if (!rules) return;
+    const digits = phoneNumber.replace(/\D/g, '');
+    const local = digits.startsWith('225') ? digits.slice(3) : digits;
+    if (local.length !== 10) {
+      throw new BadRequestException(
+        'Phone must be 10 digits (CI format: +225 07 XX XX XX XX)',
+      );
+    }
+    const prefix = local.slice(0, 2);
+    if (!rules.prefixes.includes(prefix)) {
+      throw new BadRequestException(
+        `Phone prefix ${prefix} does not match operator ${operator}. Expected: ${rules.prefixes.join(', ')}`,
+      );
+    }
+  }
 
   /**
    * Initie une transaction Mobile Money.

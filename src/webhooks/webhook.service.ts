@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
@@ -10,8 +10,12 @@ import {
   TransactionStatus,
 } from '@prisma/client';
 import type { Campaign, Account, Contact } from '@prisma/client';
+import * as crypto from 'crypto';
+import type { Request } from 'express';
 
 type CampaignWithAccount = Campaign & { account: Account };
+
+export type WebhookHeaders = Record<string, string | string[]>;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -62,6 +66,103 @@ export class WebhookService {
     private mailService: MailService,
     private eventEmitter: EventEmitter2,
   ) {}
+
+  private getRawBody(req: Request, payload: unknown): string {
+    const raw = (req as unknown as Record<string, unknown>)['rawBody'];
+    if (Buffer.isBuffer(raw)) return raw.toString();
+    return JSON.stringify(payload ?? {});
+  }
+
+  private getHeaderValue(
+    headers: WebhookHeaders,
+    keys: string[],
+  ): string | undefined {
+    for (const key of keys) {
+      const value = headers[key];
+      if (typeof value === 'string' && value.trim().length > 0)
+        return value.trim();
+      if (Array.isArray(value)) {
+        const first = value.find(
+          (v) => typeof v === 'string' && v.trim().length > 0,
+        );
+        if (first) return first.trim();
+      }
+    }
+    return undefined;
+  }
+
+  private verifyHmacSha256(
+    body: string,
+    secret: string,
+    signature: string,
+  ): boolean {
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(body)
+      .digest('hex');
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    const signatureBuf = Buffer.from(signature, 'utf8');
+    if (expectedBuf.length !== signatureBuf.length) return false;
+    return crypto.timingSafeEqual(expectedBuf, signatureBuf);
+  }
+
+  assertProviderSignature(
+    provider: string,
+    secret: string | undefined,
+    headers: WebhookHeaders,
+    req: Request,
+    payload: unknown,
+    headerKeys: string[],
+  ): void {
+    if (!secret?.trim()) return;
+    const signature = this.getHeaderValue(headers, headerKeys);
+    if (!signature) {
+      this.logger.warn(`${provider} webhook rejected: missing signature`);
+      throw new BadRequestException('Missing webhook signature');
+    }
+    const rawBody = this.getRawBody(req, payload);
+    if (!this.verifyHmacSha256(rawBody, secret, signature)) {
+      this.logger.warn(`${provider} webhook rejected: invalid signature`);
+      throw new BadRequestException('Invalid webhook signature');
+    }
+  }
+
+  assertStripeSignature(
+    secret: string | undefined,
+    headers: WebhookHeaders,
+    req: Request,
+    payload: unknown,
+  ): void {
+    if (!secret?.trim()) return;
+    const stripeSignature = this.getHeaderValue(headers, ['stripe-signature']);
+    if (!stripeSignature) {
+      this.logger.warn('Stripe webhook rejected: missing stripe-signature');
+      throw new BadRequestException('Missing webhook signature');
+    }
+    const rawBody = this.getRawBody(req, payload);
+    const segments = stripeSignature.split(',').map((p) => p.trim());
+    const timestamp = segments.find((p) => p.startsWith('t='))?.slice(2);
+    const signatures = segments
+      .filter((p) => p.startsWith('v1='))
+      .map((p) => p.slice(3));
+    if (!timestamp || signatures.length === 0) {
+      throw new BadRequestException('Invalid webhook signature header');
+    }
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(`${timestamp}.${rawBody}`)
+      .digest('hex');
+    const hasMatch = signatures.some((candidate) => {
+      const expectedBuf = Buffer.from(expected, 'utf8');
+      const candidateBuf = Buffer.from(candidate, 'utf8');
+      if (expectedBuf.length !== candidateBuf.length) return false;
+      return crypto.timingSafeEqual(expectedBuf, candidateBuf);
+    });
+    if (!hasMatch) {
+      this.logger.warn('Stripe webhook rejected: invalid signature');
+      throw new BadRequestException('Invalid webhook signature');
+    }
+  }
 
   /**
    * Recevoir et traiter un webhook d'événement email
