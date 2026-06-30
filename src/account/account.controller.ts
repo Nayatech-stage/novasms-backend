@@ -10,16 +10,24 @@ import {
   UseGuards,
   Request,
   BadRequestException,
+  ForbiddenException,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AccountService } from './account.service';
 
 interface TenantRequest extends Request {
   user: { sub: string; email: string; accountId: string; role: string };
   accountId?: string;
+}
+
+function requireAdmin(req: TenantRequest): void {
+  if (req.user?.role !== UserRole.Admin) {
+    throw new ForbiddenException('Accès réservé aux administrateurs');
+  }
 }
 
 @ApiTags('Account')
@@ -128,6 +136,7 @@ export class AccountController {
     @Request() req: TenantRequest,
     @Body() body: { email: string; role: string },
   ) {
+    requireAdmin(req);
     const accountId = req.user.accountId || req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     const invitation = await this.accountService.inviteMember(
@@ -144,6 +153,7 @@ export class AccountController {
     @Request() req: TenantRequest,
     @Param('userId') userId: string,
   ) {
+    requireAdmin(req);
     const accountId = req.user.accountId || req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     await this.accountService.revokeMember(accountId, userId);
@@ -156,6 +166,7 @@ export class AccountController {
     @Request() req: TenantRequest,
     @Param('invitationId') invitationId: string,
   ) {
+    requireAdmin(req);
     const accountId = req.user.accountId || req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     await this.accountService.cancelInvitation(accountId, invitationId);
