@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import IORedis from 'ioredis';
+import { buildRedisOptions } from '../common/redis.config';
 
 export interface SegmentFilter {
   field:
@@ -41,12 +42,10 @@ export class SegmentsService implements OnModuleDestroy {
   private readonly redis: IORedis;
 
   constructor(private prisma: PrismaService) {
-    this.redis = new IORedis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    this.redis = new IORedis(buildRedisOptions({
       lazyConnect: true,
       enableOfflineQueue: false,
-    });
+    }));
   }
 
   async onModuleDestroy() {

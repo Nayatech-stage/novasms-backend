@@ -3,6 +3,7 @@ import { PrismaService } from './prisma/prisma.service';
 import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 import Redis from 'ioredis';
+import { buildRedisOptions } from './common/redis.config';
 
 @Injectable()
 export class AppService {
@@ -64,13 +65,11 @@ export class AppService {
   }
 
   private async checkRedis(): Promise<boolean> {
-    const client = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
+    const client = new Redis(buildRedisOptions({
       connectTimeout: 2000,
       lazyConnect: true,
       maxRetriesPerRequest: 1,
-    });
+    }));
     try {
       await client.connect();
       const pong = await client.ping();

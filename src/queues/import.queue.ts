@@ -3,6 +3,7 @@ import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import type { RedisOptions } from 'ioredis';
 import { ImportService } from '../contacts/import.service';
+import { buildRedisOptions } from '../common/redis.config';
 
 const logger = new Logger('ImportQueue');
 
@@ -31,35 +32,6 @@ type RedisLike = Pick<
 >;
 
 export let redisConnection: RedisLike;
-
-function buildRedisOptions(): RedisOptions {
-  const redisUrl = process.env.REDIS_URL?.trim();
-
-  if (redisUrl) {
-    const parsed = new URL(redisUrl);
-    const db = parsed.pathname.replace('/', '');
-
-    return {
-      host: parsed.hostname,
-      port: parsed.port ? Number.parseInt(parsed.port, 10) : 6379,
-      username: parsed.username
-        ? decodeURIComponent(parsed.username)
-        : undefined,
-      password: parsed.password
-        ? decodeURIComponent(parsed.password)
-        : undefined,
-      db: db ? Number.parseInt(db, 10) : undefined,
-      tls: parsed.protocol === 'rediss:' ? {} : undefined,
-      maxRetriesPerRequest: null,
-    };
-  }
-
-  return {
-    host: process.env.REDIS_HOST || 'localhost',
-    port: Number.parseInt(process.env.REDIS_PORT || '6379', 10),
-    maxRetriesPerRequest: null,
-  };
-}
 
 if (isTest) {
   // Minimal stubs used by tests to allow importing and graceful cleanup.

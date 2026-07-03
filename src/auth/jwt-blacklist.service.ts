@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import IORedis from 'ioredis';
+import { buildRedisOptions } from '../common/redis.config';
 
 /**
  * US-015 – JWT immediate revocation via Redis blacklist.
@@ -14,12 +15,10 @@ export class JwtBlacklistService implements OnModuleDestroy {
   private readonly redis: IORedis;
 
   constructor() {
-    this.redis = new IORedis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    this.redis = new IORedis(buildRedisOptions({
       lazyConnect: true,
       enableOfflineQueue: false,
-    });
+    }));
 
     this.redis.on('error', (err: Error) => {
       this.logger.warn(`Redis blacklist connection error: ${err.message}`);
