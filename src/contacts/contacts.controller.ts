@@ -203,7 +203,25 @@ export class ContactsController {
     if (!accountId) throw new BadRequestException('accountId manquant');
 
     const job = await importQueue.getJob(jobId);
-    if (!job) return { success: false, message: 'Job introuvable' };
+
+    if (!job) {
+      // BullMQ a peut-être purgé le job complété — fallback sur le rapport en base
+      const latestReport =
+        await this.importService.getLatestReportForAccount(accountId);
+      if (latestReport) {
+        return {
+          success: true,
+          status: 'completed',
+          report: {
+            totalRecords: latestReport.totalRecords ?? 0,
+            successCount: latestReport.successCount ?? 0,
+            duplicateCount: latestReport.duplicateCount ?? 0,
+            errorCount: latestReport.errorCount ?? 0,
+          },
+        };
+      }
+      return { success: false, message: 'Job introuvable' };
+    }
 
     const state = await job.getState();
     if (state === 'completed') {

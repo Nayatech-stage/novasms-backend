@@ -405,6 +405,23 @@ export class ImportService {
     await fs.promises.appendFile(filePath, lines, { encoding: 'utf8' });
   }
 
+  /**
+   * Fallback: retourne le rapport le plus récent en base pour ce compte.
+   * Utilisé quand BullMQ a déjà purgé le job de Redis avant le poll frontend.
+   */
+  async getLatestReportForAccount(
+    accountId: string,
+    withinMs = 10 * 60 * 1000,
+  ) {
+    const report = await this.prisma.importReport.findFirst({
+      where: { accountId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!report) return null;
+    if (Date.now() - report.createdAt.getTime() > withinMs) return null;
+    return report;
+  }
+
   async finalizeChunkImport(
     accountId: string,
     fileId: string,

@@ -68,7 +68,7 @@ if (isTest) {
     defaultJobOptions: {
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: 10,
+      removeOnComplete: { count: 100, age: 3600 },
       removeOnFail: 100,
     },
   });
