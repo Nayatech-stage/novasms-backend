@@ -6,6 +6,7 @@ describe('TransactionsController — Visa et reçus (EN-1703/EN-1705)', () => {
     processVisa: jest.fn(),
     generateReceipt: jest.fn(),
     listTransactions: jest.fn(),
+    exportTransactions: jest.fn(),
   };
 
   const req = { accountId: 'acc-1' } as never;
@@ -68,6 +69,36 @@ describe('TransactionsController — Visa et reçus (EN-1703/EN-1705)', () => {
       'Content-Disposition',
       'attachment; filename="recu-tx-1.pdf"',
     );
+    expect(end).toHaveBeenCalledWith(buffer);
+  });
+
+  it('exportTransactions renvoie le CSV avec les bons en-têtes', async () => {
+    const buffer = Buffer.from('Type;ID\nRecharge;tx-1');
+    service.exportTransactions.mockResolvedValue({
+      buffer,
+      filename: 'transactions-2026-06.csv',
+      contentType: 'text/csv; charset=utf-8',
+    });
+    const setHeader = jest.fn();
+    const end = jest.fn();
+
+    await controller.exportTransactions(req, { period: 'previous-month' }, {
+      setHeader,
+      end,
+    } as never);
+
+    expect(service.exportTransactions).toHaveBeenCalledWith('acc-1', {
+      period: 'previous-month',
+    });
+    expect(setHeader).toHaveBeenCalledWith(
+      'Content-Type',
+      'text/csv; charset=utf-8',
+    );
+    expect(setHeader).toHaveBeenCalledWith(
+      'Content-Disposition',
+      'attachment; filename="transactions-2026-06.csv"',
+    );
+    expect(setHeader).toHaveBeenCalledWith('Content-Length', buffer.length);
     expect(end).toHaveBeenCalledWith(buffer);
   });
 

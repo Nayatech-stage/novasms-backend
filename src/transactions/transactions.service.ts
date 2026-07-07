@@ -1,9 +1,37 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { randomUUID } from 'crypto';
 import PDFDocument from 'pdfkit';
 import { StripeProvider } from '../providers/payment/stripe.provider';
+
+export type TransactionExportQuery = {
+  period?: string;
+  month?: string;
+  from?: string;
+  to?: string;
+  startDate?: string;
+  endDate?: string;
+};
+
+type ExportRange = {
+  start: Date;
+  end: Date;
+  label: string;
+};
+
+type ExportRow = {
+  type: string;
+  id: string;
+  reference: string;
+  date: Date;
+  method: string;
+  status: string;
+  amount: string;
+  currency: string;
+  phoneNumber: string;
+  completedAt: Date | null;
+};
 
 @Injectable()
 export class TransactionsService {
@@ -271,5 +299,252 @@ export class TransactionsService {
       this.prisma.transaction.count({ where: { accountId } }),
     ]);
     return { transactions, total, page, limit };
+  }
+
+  async exportTransactions(
+    accountId: string,
+    query: TransactionExportQuery = {},
+  ) {
+    const range = this.resolveExportRange(query);
+
+    const [transactions, mobileMoneyTransactions] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where: {
+          accountId,
+          createdAt: {
+            gte: range.start,
+            lt: range.end,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.mobileMoneyTransaction.findMany({
+        where: {
+          accountId,
+          createdAt: {
+            gte: range.start,
+            lt: range.end,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const rows: ExportRow[] = [
+      ...transactions.map((transaction) => ({
+        type: 'Recharge',
+        id: transaction.id,
+        reference: transaction.reference ?? '',
+        date: transaction.createdAt,
+        method: transaction.method ?? 'Visa',
+        status: transaction.status,
+        amount: this.decimalToString(transaction.amount),
+        currency: 'XOF',
+        phoneNumber: '',
+        completedAt: null,
+      })),
+      ...mobileMoneyTransactions.map((transaction) => ({
+        type: 'Recharge',
+        id: transaction.id,
+        reference: transaction.externalTransactionId ?? '',
+        date: transaction.createdAt,
+        method: `Mobile Money - ${transaction.operator}`,
+        status: transaction.status,
+        amount: this.decimalToString(transaction.amount),
+        currency: transaction.currency,
+        phoneNumber: transaction.phoneNumber,
+        completedAt: transaction.completedAt,
+      })),
+    ].sort((a, b) => b.date.getTime() - a.date.getTime());
+
+    const csv = this.buildCsv(rows);
+    return {
+      buffer: Buffer.from(`\uFEFF${csv}`, 'utf8'),
+      filename: `transactions-${range.label}.csv`,
+      contentType: 'text/csv; charset=utf-8',
+    };
+  }
+
+  private resolveExportRange(query: TransactionExportQuery): ExportRange {
+    const month = query.month?.trim();
+    if (month) {
+      return this.resolveMonthRange(month);
+    }
+
+    const from = query.from ?? query.startDate;
+    const to = query.to ?? query.endDate;
+    if (from || to) {
+      if (!from || !to) {
+        throw new BadRequestException(
+          'Les dates de début et de fin sont obligatoires pour exporter les transactions.',
+        );
+      }
+
+      const start = this.parseDateBoundary(from, 'start');
+      const end = this.parseDateBoundary(to, 'end');
+      this.assertValidRange(start, end);
+      return {
+        start,
+        end,
+        label: `${this.formatDateForFilename(start)}_${this.formatDateForFilename(
+          new Date(end.getTime() - 1),
+        )}`,
+      };
+    }
+
+    const period = query.period?.trim() || 'previous-month';
+    if (period === 'previous-month') {
+      const now = new Date();
+      const start = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
+      );
+      const end = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+      );
+      return {
+        start,
+        end,
+        label: this.formatMonthForFilename(start),
+      };
+    }
+
+    if (period === 'current-month') {
+      const now = new Date();
+      const start = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+      );
+      const end = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+      );
+      return {
+        start,
+        end,
+        label: this.formatMonthForFilename(start),
+      };
+    }
+
+    throw new BadRequestException(
+      'Période invalide. Utilisez previous-month, current-month, month=YYYY-MM ou from/to.',
+    );
+  }
+
+  private resolveMonthRange(month: string): ExportRange {
+    const match = /^(\d{4})-(\d{2})$/.exec(month);
+    if (!match) {
+      throw new BadRequestException(
+        'Le mois doit être au format YYYY-MM, par exemple 2026-06.',
+      );
+    }
+
+    const year = Number(match[1]);
+    const monthNumber = Number(match[2]);
+    if (monthNumber < 1 || monthNumber > 12) {
+      throw new BadRequestException(
+        'Le mois doit être compris entre 01 et 12.',
+      );
+    }
+
+    const start = new Date(Date.UTC(year, monthNumber - 1, 1));
+    const end = new Date(Date.UTC(year, monthNumber, 1));
+    return { start, end, label: month };
+  }
+
+  private parseDateBoundary(value: string, boundary: 'start' | 'end'): Date {
+    const trimmed = value.trim();
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (dateOnly) {
+      const year = Number(dateOnly[1]);
+      const month = Number(dateOnly[2]);
+      const day = Number(dateOnly[3]);
+      const date = new Date(Date.UTC(year, month - 1, day));
+      if (
+        date.getUTCFullYear() !== year ||
+        date.getUTCMonth() !== month - 1 ||
+        date.getUTCDate() !== day
+      ) {
+        throw new BadRequestException(
+          'Date invalide. Utilisez YYYY-MM-DD ou une date ISO complète.',
+        );
+      }
+
+      return boundary === 'end'
+        ? new Date(Date.UTC(year, month - 1, day + 1))
+        : date;
+    }
+
+    const date = new Date(trimmed);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(
+        'Date invalide. Utilisez YYYY-MM-DD ou une date ISO complète.',
+      );
+    }
+    return date;
+  }
+
+  private assertValidRange(start: Date, end: Date): void {
+    if (start >= end) {
+      throw new BadRequestException(
+        'La date de fin doit être postérieure à la date de début.',
+      );
+    }
+  }
+
+  private buildCsv(rows: ExportRow[]): string {
+    const header = [
+      'Type',
+      'ID',
+      'Reference',
+      'Date',
+      'Methode',
+      'Statut',
+      'Montant',
+      'Devise',
+      'Telephone',
+      'Date completion',
+    ];
+
+    const lines = rows.map((row) =>
+      [
+        row.type,
+        row.id,
+        row.reference,
+        row.date.toISOString(),
+        row.method,
+        row.status,
+        row.amount,
+        row.currency,
+        row.phoneNumber,
+        row.completedAt?.toISOString() ?? '',
+      ]
+        .map((value) => this.csvCell(value))
+        .join(';'),
+    );
+
+    return [header.join(';'), ...lines].join('\n');
+  }
+
+  private csvCell(value: string): string {
+    if (/[;"\r\n]/.test(value)) {
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+  }
+
+  private decimalToString(value: Decimal | number | string): string {
+    return value instanceof Decimal ? value.toString() : String(value);
+  }
+
+  private formatMonthForFilename(date: Date): string {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+      2,
+      '0',
+    )}`;
+  }
+
+  private formatDateForFilename(date: Date): string {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(
+      2,
+      '0',
+    )}-${String(date.getUTCDate()).padStart(2, '0')}`;
   }
 }

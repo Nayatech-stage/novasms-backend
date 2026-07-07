@@ -12,6 +12,9 @@ describe('TransactionsService — paiement Visa (RG-48) et reçus (RG-51)', () =
       findMany: jest.fn(),
       count: jest.fn(),
     },
+    mobileMoneyTransaction: {
+      findMany: jest.fn(),
+    },
     account: {
       update: jest.fn(),
       findUnique: jest.fn(),
@@ -135,6 +138,100 @@ describe('TransactionsService — paiement Visa (RG-48) et reçus (RG-51)', () =
           take: 10,
         }),
       );
+    });
+  });
+
+  describe('exportTransactions', () => {
+    it('exporte les transactions Visa et Mobile Money du mois demandé en CSV', async () => {
+      prisma.transaction.findMany.mockResolvedValue([
+        {
+          id: 'tx-visa',
+          reference: 'VISA-1',
+          amount: new Decimal(5000),
+          createdAt: new Date('2026-06-12T09:00:00Z'),
+          method: 'Visa',
+          status: 'Validated',
+        },
+      ]);
+      prisma.mobileMoneyTransaction.findMany.mockResolvedValue([
+        {
+          id: 'MM-1',
+          externalTransactionId: 'WAVE-1',
+          amount: new Decimal(7500),
+          createdAt: new Date('2026-06-15T10:00:00Z'),
+          status: 'completed',
+          operator: 'WAVE',
+          phoneNumber: '+2250700000000',
+          currency: 'XOF',
+          completedAt: new Date('2026-06-15T10:01:00Z'),
+        },
+      ]);
+
+      const result = await service.exportTransactions('acc-1', {
+        month: '2026-06',
+      });
+
+      expect(result.filename).toBe('transactions-2026-06.csv');
+      expect(result.contentType).toBe('text/csv; charset=utf-8');
+      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            accountId: 'acc-1',
+            createdAt: {
+              gte: new Date('2026-06-01T00:00:00.000Z'),
+              lt: new Date('2026-07-01T00:00:00.000Z'),
+            },
+          },
+        }),
+      );
+      expect(prisma.mobileMoneyTransaction.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            accountId: 'acc-1',
+            createdAt: {
+              gte: new Date('2026-06-01T00:00:00.000Z'),
+              lt: new Date('2026-07-01T00:00:00.000Z'),
+            },
+          },
+        }),
+      );
+
+      const csv = result.buffer.toString('utf8');
+      expect(csv).toContain('Type;ID;Reference;Date;Methode;Statut');
+      expect(csv).toContain('MM-1;WAVE-1;2026-06-15T10:00:00.000Z');
+      expect(csv).toContain('Mobile Money - WAVE;completed;7500;XOF');
+      expect(csv).toContain('tx-visa;VISA-1;2026-06-12T09:00:00.000Z');
+      expect(csv).toContain('Visa;Validated;5000;XOF');
+    });
+
+    it('inclut toute la journée de fin avec from/to', async () => {
+      prisma.transaction.findMany.mockResolvedValue([]);
+      prisma.mobileMoneyTransaction.findMany.mockResolvedValue([]);
+
+      await service.exportTransactions('acc-1', {
+        from: '2026-06-01',
+        to: '2026-06-30',
+      });
+
+      expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            accountId: 'acc-1',
+            createdAt: {
+              gte: new Date('2026-06-01T00:00:00.000Z'),
+              lt: new Date('2026-07-01T00:00:00.000Z'),
+            },
+          },
+        }),
+      );
+    });
+
+    it('rejette les mois invalides au lieu de produire une erreur serveur', async () => {
+      await expect(
+        service.exportTransactions('acc-1', { month: '2026-13' }),
+      ).rejects.toThrow('Le mois doit être compris entre 01 et 12.');
+      expect(prisma.transaction.findMany).not.toHaveBeenCalled();
+      expect(prisma.mobileMoneyTransaction.findMany).not.toHaveBeenCalled();
     });
   });
 });
