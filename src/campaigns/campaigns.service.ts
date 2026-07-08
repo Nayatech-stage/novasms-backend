@@ -231,10 +231,9 @@ export class CampaignsService {
     if (channelType === 'SMS') {
       const contentText = (body.content || '') as string;
       if (contentText.trim().length > 0 && !/\bSTOP\b/i.test(contentText)) {
-        // rollback created campaign to keep DB clean for tests
         await this.prisma.campaign.delete({ where: { id: campaign.id } });
         throw new BadRequestException(
-          'SMS content must include STOP to unsubscribe',
+          'Le message SMS doit contenir le mot "STOP" pour permettre le désabonnement (obligation légale).',
         );
       }
     }
