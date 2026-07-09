@@ -884,10 +884,52 @@ export class ContactsService {
     accountId: string,
     segmentId: string,
   ): Promise<Record<string, unknown> | null> {
-    const segments = (await this.listSegmentsWithContacts(accountId)) as Array<
-      Record<string, unknown> & { id: string }
-    >;
-    return segments.find((segment) => segment.id === segmentId) ?? null;
+    const segment = await this.prisma.segment.findFirst({
+      where: { id: segmentId, accountId },
+    });
+    if (!segment) return null;
+
+    const contactSelect = {
+      id: true,
+      email: true,
+      phone: true,
+      firstName: true,
+      lastName: true,
+      tags: true,
+      createdAt: true,
+      optOut: true,
+      location: true,
+      accountId: true,
+    };
+
+    if (segment.type === 'static') {
+      const contactIds = Array.isArray(segment.criteria)
+        ? segment.criteria
+        : (segment.criteria as any)?.contactIds || [];
+      const contacts = await this.prisma.contact.findMany({
+        where: { accountId, id: { in: contactIds }, optOut: false },
+        orderBy: { createdAt: 'desc' },
+        select: contactSelect,
+      });
+      return { ...segment, contacts };
+    }
+
+    if (segment.type === 'dynamic') {
+      const parsed = this.normalizeSegmentCriteria(segment.criteria);
+      const where = this.buildWhereForSegment(
+        accountId,
+        parsed.logic,
+        parsed.rules,
+      );
+      const contacts = await this.prisma.contact.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        select: contactSelect,
+      });
+      return { ...segment, contacts };
+    }
+
+    return { ...segment, contacts: [] };
   }
 
   /**

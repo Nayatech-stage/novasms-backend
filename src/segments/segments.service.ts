@@ -110,7 +110,7 @@ export class SegmentsService implements OnModuleDestroy {
           ? { AND: validConditions }
           : { OR: validConditions };
 
-    return { accountId, unsubscribed: false, ...combinedFilter };
+    return { accountId, optOut: false, ...combinedFilter };
   }
 
   async previewCount(
