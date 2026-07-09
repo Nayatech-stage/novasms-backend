@@ -18,6 +18,10 @@ import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 import { WhatsappProviderFactory } from '../providers/whatsapp/whatsapp.provider.factory';
 import { PrismaService } from '../prisma/prisma.service';
 import { renderCampaignEmailHtml } from '../campaigns/campaign-email.renderer';
+import {
+  createUnsubscribeToken,
+  getTrackingBaseUrl,
+} from '../track/track-token.util';
 import { AUTOMATION_EXECUTE_QUEUE } from './automation.execute.queue';
 import type {
   AutomationWithTemplate,
@@ -1319,6 +1323,12 @@ export class AutomationsService {
     if (templateContent) {
       personalizedHtml = this.applyContactTokens(templateContent, contact);
     } else if (campaign && automation.channel === 'Email') {
+      const trackingBase = getTrackingBaseUrl();
+      const unsubToken = createUnsubscribeToken(
+        contact.id,
+        automation.accountId,
+      );
+      const unsubscribeUrl = `${trackingBase}/track/unsubscribe?cid=${encodeURIComponent(contact.id)}&aid=${encodeURIComponent(automation.accountId)}&t=${encodeURIComponent(unsubToken)}`;
       personalizedHtml = renderCampaignEmailHtml(
         campaign.contentJson,
         campaign.content?.trim() || fallbackContent,
@@ -1334,6 +1344,7 @@ export class AutomationsService {
           phone: contact.phone ?? undefined,
           companyName: (campaign as any)?.account?.companyName || undefined,
           promoCode: (campaign as any)?.promoCode || undefined,
+          unsubscribeUrl,
         },
       );
     } else if (campaign) {
