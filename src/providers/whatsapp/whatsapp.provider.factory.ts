@@ -3,7 +3,7 @@ import { WhatsappProvider } from './whatsapp.provider.interface';
 import { MockWhatsappProvider } from './mock.whatsapp.provider';
 import { TwilioWhatsappProvider } from './twilio.whatsapp.provider';
 
-type WhatsappProviderName = 'mock';
+type WhatsappProviderName = 'twilio' | 'mock';
 
 @Injectable()
 export class WhatsappProviderFactory {
