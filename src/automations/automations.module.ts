@@ -9,6 +9,7 @@ import { AutomationExecutionProcessor } from './automation.execute.queue';
 import { AutomationsController } from './automations.controller';
 import { ContactAddedListener } from './automations.listener';
 import { AutomationsService } from './automations.service';
+import { buildRedisOptions } from '../common/redis.config';
 
 const isTestEnvironment =
   process.env.NODE_ENV === 'test' ||
@@ -47,10 +48,7 @@ const isTestEnvironment =
 
         const { Queue } = require('bullmq');
         return new Queue('automation-execute', {
-          connection: {
-            host: process.env.REDIS_HOST || 'localhost',
-            port: parseInt(process.env.REDIS_PORT || '6379', 10),
-          },
+          connection: buildRedisOptions(),
         });
       },
     },

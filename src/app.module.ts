@@ -29,6 +29,7 @@ import { EmailProviderFactory } from './providers/email/email.provider.factory';
 import { SmsProviderFactory } from './providers/sms/sms.provider.factory';
 import { WhatsappProviderFactory } from './providers/whatsapp/whatsapp.provider.factory';
 import { PaymentProviderFactory } from './providers/payment/payment.provider.factory';
+import { buildRedisOptions } from './common/redis.config';
 
 const isTestEnvironment =
   process.env.NODE_ENV === 'test' ||
@@ -41,10 +42,7 @@ const isTestEnvironment =
     ...(isTestEnvironment ? [] : [ScheduleModule.forRoot()]),
     EventEmitterModule.forRoot(),
     BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-      },
+      connection: buildRedisOptions(),
     }),
     // Register the automation queue at the application level so the InjectQueue
     // token is resolvable for modules that depend on it.

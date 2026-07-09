@@ -1,7 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
+import type { RedisOptions } from 'ioredis';
 import { ImportService } from '../contacts/import.service';
+import { buildRedisOptions } from '../common/redis.config';
 
 const logger = new Logger('ImportQueue');
 
@@ -21,6 +23,7 @@ type ImportJobData = {
 type ImportQueueLike = Pick<Queue, 'add' | 'close' | 'getJob'>;
 
 let connection: IORedis | null = null;
+let redisOptions: RedisOptions | null = null;
 export let importQueue: ImportQueueLike;
 export let importWorker: Worker | null = null;
 type RedisLike = Pick<
@@ -49,10 +52,8 @@ if (isTest) {
 
   importWorker = null;
 } else {
-  connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    // BullMQ workers require maxRetriesPerRequest to be null for blocking commands.
-    maxRetriesPerRequest: null,
-  });
+  redisOptions = buildRedisOptions();
+  connection = new IORedis(redisOptions);
 
   // Connection lifecycle logging to help debug Redis issues
   connection.on('connect', () => logger.log('[REDIS] connect'));
@@ -64,7 +65,7 @@ if (isTest) {
   connection.on('reconnecting', () => logger.log('[REDIS] reconnecting'));
 
   importQueue = new Queue('import-contacts', {
-    connection,
+    connection: redisOptions,
     defaultJobOptions: {
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
@@ -96,6 +97,9 @@ export function initImportWorker(importService: ImportService) {
   if (!connection) {
     throw new Error('Redis connection not initialized for import worker');
   }
+  if (!redisOptions) {
+    throw new Error('Redis options not initialized for import worker');
+  }
 
   importWorker = new Worker(
     'import-contacts',
@@ -123,8 +127,8 @@ export function initImportWorker(importService: ImportService) {
       );
     },
     {
-      connection,
-      concurrency: 2, // Traitement parallèle de 2 imports max pour performance
+      connection: redisOptions,
+      concurrency: 2,
     },
   );
 
