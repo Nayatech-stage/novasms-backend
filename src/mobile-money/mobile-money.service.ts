@@ -320,11 +320,13 @@ export class MobileMoneyService {
     const providerResult = await provider.getStatus(ref);
 
     if (providerResult.status === 'completed') {
-      await this.prisma.mobileMoneyTransaction.update({
-        where: { id },
+      const updated = await this.prisma.mobileMoneyTransaction.updateMany({
+        where: { id, status: 'pending' },
         data: { status: 'completed', completedAt: new Date() },
       });
-      await this.updateAccountBalance(accountId, transaction.amount);
+      if (updated.count > 0) {
+        await this.updateAccountBalance(accountId, transaction.amount);
+      }
       return { status: 'completed' };
     }
 
@@ -340,24 +342,17 @@ export class MobileMoneyService {
   }
 
   /**
-   * Met à jour le solde du compte après une transaction réussie
+   * Met à jour le solde du compte après une transaction réussie.
+   * Utilise un incrément atomique pour éviter les race conditions.
    */
   private async updateAccountBalance(accountId: string, amount: Decimal) {
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-    });
-
-    if (!account) {
-      throw new Error('Compte non trouvé');
-    }
-
     await this.prisma.account.update({
       where: { id: accountId },
-      data: { creditBalance: account.creditBalance.add(amount) },
+      data: { creditBalance: { increment: amount } },
     });
 
     this.logger.log(
-      `Solde du compte ${accountId} mis à jour de ${amount.toString()}`,
+      `Solde du compte ${accountId} crédité de ${amount.toString()}`,
     );
   }
 
