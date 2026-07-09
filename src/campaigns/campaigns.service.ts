@@ -227,17 +227,6 @@ export class CampaignsService {
       throw err as Error;
     }
 
-    // Basic validation for SMS content: require STOP to unsubscribe
-    if (channelType === 'SMS') {
-      const contentText = (body.content || '') as string;
-      if (contentText.trim().length > 0 && !/\bSTOP\b/i.test(contentText)) {
-        await this.prisma.campaign.delete({ where: { id: campaign.id } });
-        throw new BadRequestException(
-          'Le message SMS doit contenir le mot "STOP" pour permettre le désabonnement (obligation légale).',
-        );
-      }
-    }
-
     // Basic validation for EMAIL content: ensure URLs look valid in button blocks
     if (
       channelType === 'EMAIL' &&
