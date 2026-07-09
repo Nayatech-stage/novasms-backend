@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import { join } from 'path';
 import { FileUploadService } from './file-upload.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageProviderFactory } from '../providers/storage/storage.provider.factory';
+import { LocalStorageProvider } from '../providers/storage/local.storage.provider';
 
 describe('FileUploadService — images de campagne (stockage local)', () => {
   const originalEnv = process.env;
@@ -17,9 +19,22 @@ describe('FileUploadService — images de campagne (stockage local)', () => {
     },
   };
 
+  const makeStorageFactory = () => {
+    const localProvider = new LocalStorageProvider(
+      join(process.cwd(), 'uploads', 'campaigns'),
+      'http://localhost:3000/api',
+    );
+    return {
+      getProvider: () => localProvider,
+    } as unknown as StorageProviderFactory;
+  };
+
   const makeService = () => {
     process.env = { ...originalEnv, CAMPAIGN_IMAGE_STORAGE_PROVIDER: 'local' };
-    return new FileUploadService(prisma as unknown as PrismaService);
+    return new FileUploadService(
+      prisma as unknown as PrismaService,
+      makeStorageFactory(),
+    );
   };
 
   const makeFile = (overrides: Partial<Express.Multer.File> = {}) =>

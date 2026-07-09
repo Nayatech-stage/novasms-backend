@@ -71,23 +71,7 @@ describe('CampaignsService — CRUD et validations (NEW-T05)', () => {
       ).rejects.toThrow('trop long');
     });
 
-    it('rejette un SMS sans mention STOP (US-008)', async () => {
-      prisma.campaign.create.mockResolvedValue({ id: 'camp-1' });
-      prisma.campaign.delete.mockResolvedValue({});
-
-      await expect(
-        service.create('acc-1', {
-          channelType: 'SMS',
-          content: 'Promo -50% aujourd’hui seulement !',
-        }),
-      ).rejects.toThrow('STOP');
-      // rollback de la campagne créée
-      expect(prisma.campaign.delete).toHaveBeenCalledWith({
-        where: { id: 'camp-1' },
-      });
-    });
-
-    it('accepte un SMS contenant STOP', async () => {
+    it('accepte un SMS sans STOP obligatoire (code ajouté auto)', async () => {
       prisma.campaign.create.mockResolvedValue({
         id: 'camp-1',
         channelType: 'SMS',

@@ -5,10 +5,12 @@ type Handler = (...args: unknown[]) => void;
 class FakeRedis {
   static instances: FakeRedis[] = [];
   handlers: Record<string, Handler[]> = {};
+  opts: Record<string, unknown>;
   constructor(
-    public url: string,
-    public opts: Record<string, unknown>,
+    urlOrOpts: string | Record<string, unknown>,
+    opts?: Record<string, unknown>,
   ) {
+    this.opts = typeof urlOrOpts === 'object' ? urlOrOpts : (opts ?? {});
     FakeRedis.instances.push(this);
   }
   on(event: string, cb: Handler) {
@@ -104,7 +106,7 @@ describe('import.queue – branche production (Redis/BullMQ mockés)', () => {
   it('crée la connexion Redis avec maxRetriesPerRequest null et log les événements', () => {
     expect(FakeRedis.instances).toHaveLength(1);
     const redis = FakeRedis.instances[0];
-    expect(redis.opts).toEqual({ maxRetriesPerRequest: null });
+    expect(redis.opts).toMatchObject({ maxRetriesPerRequest: null });
     // Exécute les handlers de cycle de vie pour couvrir les lignes de log
     redis.emit('connect');
     redis.emit('ready');

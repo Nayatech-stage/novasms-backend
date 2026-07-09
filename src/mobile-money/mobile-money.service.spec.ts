@@ -23,6 +23,7 @@ describe('MobileMoneyService — recharge crédits (US-017 / EN-1665)', () => {
     mobileMoneyTransaction: {
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
     },
@@ -186,10 +187,6 @@ describe('MobileMoneyService — recharge crédits (US-017 / EN-1665)', () => {
         externalTransactionId: 'ext-99',
         completedAt: new Date(),
       });
-      prisma.account.findUnique.mockResolvedValue({
-        id: 'acc-1',
-        creditBalance: new Decimal(1000),
-      });
       prisma.account.update.mockResolvedValue({});
 
       const result = await service.confirmTransaction('MM-1', '1234', 'acc-1');
@@ -203,10 +200,12 @@ describe('MobileMoneyService — recharge crédits (US-017 / EN-1665)', () => {
           }),
         }),
       );
-      // 1000 + 5000 = 6000
+      // Incrément atomique : creditBalance = { increment: 5000 }
       const updateCall = prisma.account.update.mock.calls[0][0];
       expect(updateCall.where).toEqual({ id: 'acc-1' });
-      expect(updateCall.data.creditBalance.toString()).toBe('6000');
+      expect(updateCall.data.creditBalance).toMatchObject({
+        increment: new Decimal(5000),
+      });
     });
   });
 
@@ -231,16 +230,17 @@ describe('MobileMoneyService — recharge crédits (US-017 / EN-1665)', () => {
         success: true,
         status: 'completed',
       });
-      prisma.mobileMoneyTransaction.update.mockResolvedValue({});
-      prisma.account.findUnique.mockResolvedValue({
-        id: 'acc-1',
-        creditBalance: new Decimal(0),
-      });
+      prisma.mobileMoneyTransaction.updateMany.mockResolvedValue({ count: 1 });
       prisma.account.update.mockResolvedValue({});
 
       const result = await service.pollTransactionStatus('MM-1', 'acc-1');
 
       expect(result).toEqual({ status: 'completed' });
+      expect(prisma.mobileMoneyTransaction.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 'MM-1', status: 'pending' }),
+        }),
+      );
       expect(prisma.account.update).toHaveBeenCalledTimes(1);
     });
 

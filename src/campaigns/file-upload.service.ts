@@ -4,6 +4,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageProviderFactory } from '../providers/storage/storage.provider.factory';
 import type { StorageProvider } from '../providers/storage/storage.provider.interface';
 
+function resolvePublicApiBaseUrl(): string {
+  const base =
+    process.env.BACKEND_PUBLIC_URL ||
+    process.env.API_BASE_URL ||
+    'http://localhost:3000';
+  return `${base.replace(/\/$/, '')}/api`;
+}
+
 export interface CampaignImageResponse {
   id: string;
   fileName: string;
@@ -77,16 +85,14 @@ export class FileUploadService {
   async getCampaignImage(
     fileName: string,
   ): Promise<{ buffer: Buffer; mimeType: string }> {
-    try {
-      return await this.storage.read(fileName);
-    } catch {
-      const record = await this.prisma.campaignImage.findFirst({
+    const [{ buffer, mimeType: storageMimeType }, record] = await Promise.all([
+      this.storage.read(fileName),
+      this.prisma.campaignImage.findFirst({
         where: { storageUrl: { endsWith: `/${fileName}` } },
         select: { mimeType: true },
-      });
-      const result = await this.storage.read(fileName);
-      return { ...result, mimeType: record?.mimeType || result.mimeType };
-    }
+      }),
+    ]);
+    return { buffer, mimeType: record?.mimeType || storageMimeType };
   }
 
   async getPresignedGetUrl(
@@ -114,7 +120,13 @@ export class FileUploadService {
         uploadedAt: true,
       },
     });
-    return images;
+    const publicBase = resolvePublicApiBaseUrl();
+    return images.map((image) => ({
+      ...image,
+      storageUrl: image.storageUrl.startsWith('http')
+        ? image.storageUrl
+        : `${publicBase}${image.storageUrl.replace(/^\/api/, '')}`,
+    }));
   }
 
   async deleteAllCampaignImages(campaignId: string): Promise<void> {
