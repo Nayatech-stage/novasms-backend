@@ -1479,9 +1479,9 @@ export class AutomationsService {
 
     const result = await this.prisma.$executeRaw`
       UPDATE accounts
-      SET    credit_balance = credit_balance - ${cost}::decimal
-      WHERE  id = ${accountId}::uuid
-      AND    credit_balance >= ${cost}::decimal
+      SET    "creditBalance" = "creditBalance" - ${cost}::decimal
+      WHERE  id = ${accountId}
+      AND    "creditBalance" >= ${cost}::decimal
     `;
 
     if (result === 0) {

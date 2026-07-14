@@ -79,14 +79,16 @@ export class ContactsService {
 
       // tags est Json? → les opérateurs varient selon le type de recherche
       if (c.field === 'tag') {
+        const tagValue = String(c.value);
         if (c.operator === 'contains') {
-          // Recherche substring dans le tableau : Prisma sérialise le JSON en texte
-          // → string_contains cherche la sous-chaîne dans la représentation texte du tableau
-          // ex: ["CLIENT","NEWSLETTER"] contient "CLIE" → match
-          cond = { tags: { string_contains: String(c.value) } };
+          // Recherche d'un tag dont la valeur contient la sous-chaîne saisie.
+          // On encadre la valeur de guillemets JSON pour éviter les faux positifs :
+          // string_contains: '"ME"' sur ["MEMBER","VIP"] ne matche PAS (car "ME" n'est pas
+          // un token complet dans ce JSON), mais matche ["ME","VIP"].
+          cond = { tags: { string_contains: `"${tagValue}"` } };
         } else {
           // Match exact d'un élément (equals / in)
-          cond = { tags: { array_contains: [String(c.value)] } };
+          cond = { tags: { array_contains: [tagValue] } };
         }
       } else if (c.field === 'status') {
         const v = String(c.value).toLowerCase();

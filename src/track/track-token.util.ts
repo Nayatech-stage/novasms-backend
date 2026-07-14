@@ -31,6 +31,27 @@ export function verifyTrackingToken(sendId: string, token?: string): boolean {
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token));
 }
 
+export function createUnsubscribeToken(
+  contactId: string,
+  accountId: string,
+): string {
+  return crypto
+    .createHmac('sha256', getTrackingSecret())
+    .update(`unsub:${contactId}:${accountId}`)
+    .digest('hex');
+}
+
+export function verifyUnsubscribeToken(
+  contactId: string,
+  accountId: string,
+  token?: string,
+): boolean {
+  if (!token) return false;
+  const expected = createUnsubscribeToken(contactId, accountId);
+  if (expected.length !== token.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token));
+}
+
 export function getTrackingBaseUrl(): string {
   const explicit = process.env.TRACKING_BASE_URL?.trim();
   if (explicit) {

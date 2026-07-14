@@ -282,6 +282,22 @@ export class CampaignsController {
     return this.fileUploadService.getCampaignImages(campaignId);
   }
 
+  @Delete(':campaignId/images/:imageId')
+  async deleteImage(
+    @Param('campaignId') campaignId: string,
+    @Param('imageId') imageId: string,
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new Error('accountId manquant');
+
+    const campaign = await this.campaignsService.get(accountId, campaignId);
+    if (!campaign) throw new Error('Campaign not found');
+
+    await this.fileUploadService.deleteCampaignImageById(imageId);
+    return { success: true };
+  }
+
   @Delete(':campaignId/images')
   async deleteAllImages(
     @Param('campaignId') campaignId: string,

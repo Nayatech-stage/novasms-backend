@@ -25,19 +25,18 @@ export enum CampaignStatus {
 export class CreateCampaignDto {
   @ApiProperty({ example: 'Promo Hiver' })
   @IsString()
-  name: string;
+  name!: string;
 
   @ApiProperty({ enum: CampaignType })
   @IsEnum(CampaignType)
-  type: CampaignType;
+  type!: CampaignType;
 
-  // Correction: suppression de type: 'object' pour éviter l'erreur Swagger
   @ApiProperty({
     example: '{"text": "Bonjour {{prénom}}..."}',
     description: 'JSON string or object',
   })
   @IsString()
-  content: string;
+  content!: string;
 
   @ApiProperty({ required: false, example: 'Objet A' })
   @IsOptional()
@@ -68,5 +67,5 @@ export class CreateCampaignDto {
 
   @ApiProperty()
   @IsUUID()
-  segmentId: string;
+  segmentId!: string;
 }

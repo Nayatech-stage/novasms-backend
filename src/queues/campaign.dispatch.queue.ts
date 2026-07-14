@@ -694,11 +694,12 @@ export class CampaignDispatchProcessor extends WorkerHost {
     if (costPerSend <= 0) return;
 
     // Atomic check-and-decrement — prevents negative balance
+    // Column is "creditBalance" (camelCase, no @map) and id is TEXT (no ::uuid cast)
     const result = await this.prisma.$executeRaw`
       UPDATE accounts
-      SET    credit_balance = credit_balance - ${costPerSend}::decimal
-      WHERE  id = ${accountId}::uuid
-      AND    credit_balance >= ${costPerSend}::decimal
+      SET    "creditBalance" = "creditBalance" - ${costPerSend}::decimal
+      WHERE  id = ${accountId}
+      AND    "creditBalance" >= ${costPerSend}::decimal
     `;
 
     if (result === 0) {

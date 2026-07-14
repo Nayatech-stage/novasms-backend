@@ -106,6 +106,22 @@ export class FileUploadService {
     await this.storage.delete(fileName);
   }
 
+  async deleteCampaignImageById(imageId: string): Promise<void> {
+    const image = await this.prisma.campaignImage.findUnique({
+      where: { id: imageId },
+    });
+    if (!image) throw new Error('Image not found');
+    const fileName = image.storageUrl.split('/').pop();
+    if (fileName) {
+      try {
+        await this.storage.delete(fileName);
+      } catch {
+        // ignore if file already missing from storage
+      }
+    }
+    await this.prisma.campaignImage.delete({ where: { id: imageId } });
+  }
+
   async getCampaignImages(
     campaignId: string,
   ): Promise<CampaignImageResponse[]> {

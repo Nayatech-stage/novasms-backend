@@ -30,6 +30,7 @@ describe('ContactsController — segments et import par chunks', () => {
     initChunkImport: jest.fn(),
     appendChunk: jest.fn(),
     finalizeChunkImport: jest.fn(),
+    getLatestReportForAccount: jest.fn().mockResolvedValue(null),
   };
 
   const req = { accountId: 'acc-1' } as never;

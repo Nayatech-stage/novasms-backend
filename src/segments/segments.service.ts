@@ -62,7 +62,7 @@ export class SegmentsService implements OnModuleDestroy {
       (filter) => {
         switch (filter.field) {
           case 'tags':
-            return { tags: { has: filter.value as string } };
+            return { tags: { array_contains: [filter.value as string] } };
           case 'country':
             return {
               country:

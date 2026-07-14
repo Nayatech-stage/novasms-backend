@@ -300,6 +300,31 @@ export class ContactsController {
     return updated;
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
+  @Post(':id/tags')
+  @ApiOperation({ summary: 'Ajouter des tags a un contact' })
+  @HttpCode(HttpStatus.OK)
+  async addTags(
+    @Param('id') id: string,
+    @Body() body: { tags: string[] },
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    if (!Array.isArray(body?.tags))
+      throw new BadRequestException('tags doit être un tableau');
+    const contact = await this.contactsService.findById(accountId, id);
+    if (!contact) throw new NotFoundException('Contact non trouvé');
+    const existingTags = Array.isArray(contact.tags)
+      ? (contact.tags as string[])
+      : [];
+    const mergedTags = [...new Set([...existingTags, ...body.tags])];
+    const updated = await this.contactsService.update(accountId, id, {
+      tags: mergedTags,
+    });
+    return { success: true, contact: updated };
+  }
+
   @Post(':id/opt-out')
   @ApiOperation({ summary: 'Desabonner un contact (opt-out)' })
   @HttpCode(HttpStatus.OK)

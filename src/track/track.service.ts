@@ -6,7 +6,10 @@ import {
   SendVariant,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { verifyTrackingToken } from './track-token.util';
+import {
+  verifyTrackingToken,
+  verifyUnsubscribeToken,
+} from './track-token.util';
 
 @Injectable()
 export class TrackService {
@@ -218,5 +221,51 @@ export class TrackService {
     });
 
     this.logger.debug(`Tracked click for send ${sendId}`);
+  }
+
+  async trackUnsubscribe(
+    contactId: string,
+    accountId: string,
+    token?: string,
+  ): Promise<boolean> {
+    if (
+      !contactId ||
+      !accountId ||
+      !verifyUnsubscribeToken(contactId, accountId, token)
+    ) {
+      this.logger.warn(`Invalid unsubscribe token for contact ${contactId}`);
+      return false;
+    }
+
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: contactId, accountId },
+      select: { id: true, optOut: true },
+    });
+
+    if (!contact) {
+      this.logger.warn(
+        `Unsubscribe: contact ${contactId} not found in account ${accountId}`,
+      );
+      return false;
+    }
+
+    if (!contact.optOut) {
+      await this.prisma.contact.update({
+        where: { id: contactId },
+        data: { optOut: true, optOutAt: new Date() },
+      });
+
+      await this.prisma.auditLog.create({
+        data: {
+          accountId,
+          action: 'contact_unsubscribed',
+          details: { contactId, source: 'email_link' },
+        },
+      });
+
+      this.logger.log(`Contact ${contactId} unsubscribed via email link`);
+    }
+
+    return true;
   }
 }

@@ -4,14 +4,19 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { TemplatesService } from './templates.service';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
+import type { Request as ExpressRequest } from 'express';
+
+type TenantRequest = ExpressRequest & { accountId?: string };
 
 @UseGuards(JwtAuthGuard)
 @Controller('templates')
@@ -19,13 +24,16 @@ export class TemplatesController {
   constructor(private readonly svc: TemplatesService) {}
 
   @Post()
-  create(@Body() body: CreateTemplateDto) {
+  create(@Body() body: CreateTemplateDto, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (accountId) body.accountId = accountId;
     return this.svc.create(body);
   }
 
   @Get()
-  findAll() {
-    return this.svc.findAll();
+  findAll(@Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    return this.svc.findAll(undefined, undefined, accountId);
   }
 
   @Get('key/:key')
@@ -40,6 +48,11 @@ export class TemplatesController {
 
   @Put(':id')
   update(@Param('id') id: string, @Body() body: UpdateTemplateDto) {
+    return this.svc.update(id, body);
+  }
+
+  @Patch(':id')
+  patch(@Param('id') id: string, @Body() body: UpdateTemplateDto) {
     return this.svc.update(id, body);
   }
 

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Query, Res, HttpCode } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags } from '@nestjs/swagger';
 import { TrackService } from './track.service';
@@ -47,6 +47,25 @@ export class TrackController {
     );
     res.setHeader('Pragma', 'no-cache');
     res.status(200).send(ONE_PIXEL_GIF);
+  }
+
+  @Get('unsubscribe')
+  async unsubscribe(
+    @Query('cid') contactId: string,
+    @Query('aid') accountId: string,
+    @Query('t') token: string,
+    @Res() res: Response,
+  ) {
+    const ok = await this.trackService.trackUnsubscribe(
+      contactId,
+      accountId,
+      token,
+    );
+    const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+    const redirectUrl = ok
+      ? `${frontendUrl}/unsubscribed`
+      : `${frontendUrl}/unsubscribe-error`;
+    res.redirect(302, redirectUrl || '/');
   }
 
   @Get('click')

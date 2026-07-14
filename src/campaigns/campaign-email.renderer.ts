@@ -287,6 +287,7 @@ export function renderCampaignEmailHtml(
     phone?: string;
     companyName?: string;
     promoCode?: string;
+    unsubscribeUrl?: string;
   },
 ): string {
   const body = asRecord(contentJson);
@@ -304,10 +305,22 @@ export function renderCampaignEmailHtml(
     .map((block) => renderEmailBlock(block, context))
     .join('');
 
+  const unsubscribeFooter = context.unsubscribeUrl
+    ? `
+    <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#6b7280;">
+      Vous recevez cet email parce que vous êtes abonné(e) à nos communications.
+      <br>
+      <a href="${escapeHtml(context.unsubscribeUrl)}" style="color:#6b7280;text-decoration:underline;">
+        Se désabonner
+      </a>
+    </div>`
+    : '';
+
   return `
     <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#ffffff;color:#111827;">
       <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preheader || subject)}</div>
       ${renderedBlocks}
+      ${unsubscribeFooter}
     </div>
   `;
 }

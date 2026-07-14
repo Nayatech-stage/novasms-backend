@@ -22,11 +22,16 @@ export class TemplatesService {
 
   async create(data: CreateTemplateDto) {
     const accountId = await this.resolveAccountId(data.accountId);
+    // Auto-generate unique key if not provided
+    const key =
+      data.key && data.key.trim()
+        ? data.key.trim()
+        : `tpl-${accountId.slice(0, 8)}-${Date.now()}`;
     return this.prisma.template.create({
       data: {
         accountId,
-        key: data.key,
-        name: data.name,
+        key,
+        name: data.name ?? null,
         channelType: data.channelType ?? data.channel ?? null,
         htmlContent: data.htmlContent ?? data.contentHtml ?? null,
         contentText: data.contentText ?? null,
@@ -37,10 +42,11 @@ export class TemplatesService {
     });
   }
 
-  async findAll(page = 1, limit = 50) {
+  async findAll(page = 1, limit = 50, accountId?: string) {
     const take = Math.min(Math.max(limit, 1), 100);
     const skip = (Math.max(page, 1) - 1) * take;
     return this.prisma.template.findMany({
+      where: accountId ? { accountId } : undefined,
       orderBy: { createdAt: 'desc' },
       take,
       skip,
