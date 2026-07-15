@@ -19,6 +19,14 @@ function exampleFor(country: CountryCode): string {
   }
 }
 
+function normalizePhoneInput(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.startsWith('+')) {
+    return '+' + trimmed.slice(1).replace(/[\s\-()./]/g, '');
+  }
+  return trimmed.replace(/[\s\-()./]/g, '');
+}
+
 export function validatePhone(
   phone: string,
   defaultCountry: CountryCode = 'CI',
@@ -33,10 +41,9 @@ export function validatePhone(
     };
   }
 
-  const raw = phone.trim();
+  const raw = normalizePhoneInput(phone);
 
   try {
-    // Numéros avec + : parse international sans pays par défaut
     const parsed = raw.startsWith('+')
       ? parsePhoneNumber(raw)
       : parsePhoneNumber(raw, defaultCountry);

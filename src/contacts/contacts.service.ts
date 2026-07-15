@@ -350,6 +350,7 @@ export class ContactsService {
     if (data.location !== undefined) payload.location = data.location;
     if (data.tags !== undefined) payload.tags = data.tags;
     if (data.optOut !== undefined) payload.optOut = data.optOut;
+    if (data.birthday !== undefined) payload.birthday = data.birthday;
 
     const updated = await this.prisma.contact.update({
       where: { id },
