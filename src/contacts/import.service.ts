@@ -334,13 +334,19 @@ export class ImportService {
     totalRows: number;
   }> {
     const ext = file.originalname.split('.').pop()?.toLowerCase();
+    const LIMIT = 50_000;
+
+    // Support CSV en plus de XLS/XLSX
+    if (ext === 'csv') {
+      return this.parseCsvBuffer(file.buffer, LIMIT);
+    }
+
     if (!['xls', 'xlsx'].includes(ext ?? '')) {
       throw new BadRequestException(
-        'Format non supporté. Utilisez XLS ou XLSX.',
+        'Format non supporté. Utilisez CSV, XLS ou XLSX.',
       );
     }
 
-    const LIMIT = 50_000;
     const workbook = new ExcelJS.Workbook();
     try {
       const ab = file.buffer.buffer.slice(
@@ -373,6 +379,62 @@ export class ImportService {
       });
       rows.push(obj);
     });
+
+    return { headers, rows, preview: rows.slice(0, 5), totalRows: rows.length };
+  }
+
+  private parseCsvBuffer(
+    buffer: Buffer,
+    limit: number,
+  ): {
+    headers: string[];
+    rows: Record<string, unknown>[];
+    preview: Record<string, unknown>[];
+    totalRows: number;
+  } {
+    const text = buffer.toString('utf-8');
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length === 0) throw new BadRequestException('Fichier CSV vide');
+
+    const parseLine = (line: string): string[] => {
+      const result: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if ((ch === ',' || ch === ';') && !inQuotes) {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+
+    const headers = parseLine(lines[0]).map((h) =>
+      h.replace(/^"|"$/g, '').trim(),
+    );
+    if (headers.length === 0)
+      throw new BadRequestException('En-têtes CSV introuvables');
+
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 1; i < lines.length && rows.length < limit; i++) {
+      const vals = parseLine(lines[i]);
+      const obj: Record<string, unknown> = {};
+      headers.forEach((h, idx) => {
+        obj[h] = vals[idx]?.replace(/^"|"$/g, '') ?? '';
+      });
+      rows.push(obj);
+    }
 
     return { headers, rows, preview: rows.slice(0, 5), totalRows: rows.length };
   }

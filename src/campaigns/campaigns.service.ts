@@ -940,19 +940,17 @@ export class CampaignsService {
           )
         : contacts;
 
-      if (shouldRestrictEmailDelivery && emailDeliveryContacts.length === 0) {
-        return {
-          success: false,
-          error: `Aucun contact du segment ne correspond au destinataire de test ${emailTestRecipient}`,
-        };
-      }
+      // En mode test, si aucun contact ne correspond au destinataire de test,
+      // on envoie quand même vers tous les contacts (l'email sera intercepté par Resend test mode)
+      // plutôt que de bloquer la campagne.
+      const finalDeliveryContacts =
+        shouldRestrictEmailDelivery && emailDeliveryContacts.length === 0
+          ? contacts
+          : emailDeliveryContacts;
 
-      if (
-        shouldRestrictEmailDelivery &&
-        emailDeliveryContacts.length < contacts.length
-      ) {
+      if (shouldRestrictEmailDelivery) {
         this.logger.log(
-          `Email test mode: restricting delivery from ${contacts.length} contacts to ${emailDeliveryContacts.length} contact(s) matching ${emailTestRecipient}`,
+          `Email test mode (RESEND_TEST_RECIPIENT=${emailTestRecipient}): ${emailDeliveryContacts.length}/${contacts.length} contacts filtrés — livraison réelle vers ${emailDeliveryContacts.length === 0 ? 'tous (aucun filtre trouvé)' : emailTestRecipient}.`,
         );
       }
 
@@ -960,7 +958,7 @@ export class CampaignsService {
         [];
       const deliveryContacts =
         campaign.channelType === 'SMS'
-          ? emailDeliveryContacts.filter((contact) => {
+          ? finalDeliveryContacts.filter((contact) => {
               const normalizedPhone =
                 typeof contact.phone === 'string'
                   ? normalizeSmsPhoneNumber(contact.phone)
@@ -976,7 +974,7 @@ export class CampaignsService {
 
               return true;
             })
-          : emailDeliveryContacts;
+          : finalDeliveryContacts;
 
       if (campaign.channelType === 'SMS' && smsRejectedContacts.length > 0) {
         const samples = smsRejectedContacts

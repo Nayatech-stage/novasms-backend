@@ -52,6 +52,7 @@ model Account {
   templates               Template[]
   transactions            Transaction[]
   users                   User[]
+  webhookSubscriptions    WebhookSubscription[]
 
   @@map("accounts")
 }
@@ -597,4 +598,19 @@ enum AnalyticAction {
   Click
   Unsubscribe
   Bounce
+}
+
+model WebhookSubscription {
+  id          String   @id @default(uuid())
+  accountId   String
+  url         String   @db.VarChar(512)
+  events      String[]
+  secret      String?  @db.VarChar(128)
+  isActive    Boolean  @default(true)
+  description String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @db.Timestamp(6)
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("webhook_subscriptions")
 }
