@@ -114,6 +114,7 @@ export function initImportWorker(importService: ImportService) {
           accountId,
           fileName,
           filePath,
+          job,
         );
       }
 
@@ -124,6 +125,7 @@ export function initImportWorker(importService: ImportService) {
         accountId,
         fileName,
         mappedData ?? [],
+        job,
       );
     },
     {

@@ -180,6 +180,7 @@ describe('ContactsController — segments et import par chunks', () => {
       await expect(controller.getImportStatus('j-1', req)).resolves.toEqual({
         success: true,
         status: 'active',
+        progress: null,
       });
     });
   });

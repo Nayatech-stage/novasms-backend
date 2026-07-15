@@ -8,6 +8,8 @@ import * as os from 'os';
 import * as readline from 'readline';
 import { randomUUID } from 'crypto';
 import ExcelJS from 'exceljs';
+import { validatePhoneOrNull } from '../common/phone-validator.util';
+import type { Job } from 'bullmq';
 
 export type ImportRow = {
   email?: string;
@@ -74,6 +76,7 @@ export class ImportService {
       success: 0,
       duplicates: 0,
       errors: 0,
+      invalidPhones: 0,
       details: [] as Array<{
         row: ImportRow;
         status?: string;
@@ -127,6 +130,12 @@ export class ImportService {
         continue;
       }
 
+      // Valider le numéro de téléphone et déterminer son statut
+      const phoneValidation = validatePhoneOrNull(phoneKey);
+      if (phoneKey && phoneValidation.status === 'INVALID') {
+        result.invalidPhones++;
+      }
+
       // Création du nouveau contact avec isolation stricte (RG-13)
       try {
         const created = await this.prisma.contact.create({
@@ -138,6 +147,7 @@ export class ImportService {
             lastName: contact.lastName || null,
             tags: contact.tags || [],
             optOut: false,
+            phoneStatus: phoneValidation.status,
           },
         });
 
@@ -204,9 +214,15 @@ export class ImportService {
     accountId: string,
     fileName: string,
     allRows: ImportRow[],
+    job?: Job,
   ) {
     const total = allRows.length;
-    const globalResult = { success: 0, duplicates: 0, errors: 0 };
+    const globalResult = {
+      success: 0,
+      duplicates: 0,
+      errors: 0,
+      invalidPhones: 0,
+    };
 
     // Traitement par batches pour performance et mémoire
     for (let i = 0; i < allRows.length; i += this.BATCH_SIZE) {
@@ -216,6 +232,20 @@ export class ImportService {
       globalResult.success += batchResult.success;
       globalResult.duplicates += batchResult.duplicates;
       globalResult.errors += batchResult.errors;
+      globalResult.invalidPhones += batchResult.invalidPhones;
+
+      const current = Math.min(i + this.BATCH_SIZE, total);
+      if (job) {
+        await job.updateProgress({
+          current,
+          total,
+          percentage: Math.round((current / total) * 100),
+          success: globalResult.success,
+          duplicates: globalResult.duplicates,
+          errors: globalResult.errors,
+          invalidPhones: globalResult.invalidPhones,
+        });
+      }
     }
 
     // Générer le rapport final (RG-12)
@@ -266,21 +296,28 @@ export class ImportService {
     accountId: string,
     fileName: string,
     filePath: string,
+    job?: Job,
   ) {
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: 'utf8' }),
       crlfDelay: Infinity,
     });
 
-    const globalResult = { success: 0, duplicates: 0, errors: 0 };
+    const globalResult = {
+      success: 0,
+      duplicates: 0,
+      errors: 0,
+      invalidPhones: 0,
+    };
     const batch: ImportRow[] = [];
+    let processedTotal = 0;
 
     for await (const line of rl) {
       if (!line) continue;
       try {
-        const row = JSON.parse(line);
+        const row = JSON.parse(line) as ImportRow;
         batch.push(row);
-      } catch (e) {
+      } catch {
         this.logger.warn('Skipping invalid JSON line during import streaming');
         globalResult.errors++;
       }
@@ -290,6 +327,20 @@ export class ImportService {
         globalResult.success += r.success;
         globalResult.duplicates += r.duplicates;
         globalResult.errors += r.errors;
+        globalResult.invalidPhones += r.invalidPhones;
+        processedTotal += this.BATCH_SIZE;
+
+        if (job) {
+          await job.updateProgress({
+            current: processedTotal,
+            total: 0,
+            percentage: -1,
+            success: globalResult.success,
+            duplicates: globalResult.duplicates,
+            errors: globalResult.errors,
+            invalidPhones: globalResult.invalidPhones,
+          });
+        }
       }
     }
 
@@ -298,6 +349,7 @@ export class ImportService {
       globalResult.success += r.success;
       globalResult.duplicates += r.duplicates;
       globalResult.errors += r.errors;
+      globalResult.invalidPhones += r.invalidPhones;
     }
 
     // Générer le rapport final

@@ -233,7 +233,11 @@ export class ContactsController {
         report: job.returnvalue || null,
       };
     }
-    return { success: true, status: state };
+    const progress =
+      typeof job.progress === 'object' && job.progress !== null
+        ? (job.progress as Record<string, unknown>)
+        : null;
+    return { success: true, status: state, progress };
   }
 
   @Get(':id/history')

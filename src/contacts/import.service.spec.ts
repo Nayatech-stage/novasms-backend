@@ -82,7 +82,7 @@ describe('ImportService — import contacts (RG-08/RG-11/RG-13)', () => {
 
       expect(result.success).toBe(1);
       expect(prisma.contact.create).toHaveBeenCalledWith({
-        data: {
+        data: expect.objectContaining({
           accountId: 'acc-1',
           email: 'a@b.ci',
           phone: '225070000',
@@ -90,7 +90,7 @@ describe('ImportService — import contacts (RG-08/RG-11/RG-13)', () => {
           lastName: null,
           tags: ['vip'],
           optOut: false,
-        },
+        }),
       });
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'contact.added',

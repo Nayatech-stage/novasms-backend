@@ -147,6 +147,7 @@ describe('import.queue – branche production (Redis/BullMQ mockés)', () => {
       'acc-1',
       'contacts.csv',
       [{ telephone: '+2250700000001' }],
+      expect.objectContaining({ id: 'job-1' }),
     );
   });
 
