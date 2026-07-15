@@ -27,6 +27,7 @@ import type {
   AutomationWithTemplate,
   CampaignEvent,
   ContactAddedEvent,
+  ContactTagAddedEvent,
   SegmentJoinedEvent,
   ExecuteAutomationJob,
 } from './automations.types';
@@ -313,6 +314,32 @@ export class AutomationsService {
     });
   }
 
+  async scheduleTagAddedAutomations(event: ContactTagAddedEvent) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: event.contactId, accountId: event.accountId },
+    });
+    if (!contact) return;
+
+    // Chercher les automations tag_added dont le triggerConfig.tag correspond à un des tags ajoutés
+    const automations = await this.prisma.automation.findMany({
+      where: {
+        accountId: event.accountId,
+        status: 'Active',
+        trigger: 'tag_added',
+      },
+    });
+
+    for (const automation of automations) {
+      const config =
+        (automation.triggerConfig as Record<string, unknown>) ?? {};
+      const targetTag = config.tag as string | undefined;
+      // Si aucun tag cible configuré, déclencher pour tout ajout. Sinon, vérifier le match.
+      if (!targetTag || event.tags.includes(targetTag)) {
+        await this.enqueueAutomationExecution(automation, contact.id, 0);
+      }
+    }
+  }
+
   async scheduleCampaignOpenedAutomations(event: CampaignEvent) {
     const contact = await this.prisma.contact.findFirst({
       where: { id: event.contactId, accountId: event.accountId },
@@ -425,6 +452,41 @@ export class AutomationsService {
       this.logger.log(
         `Recurring automation ${automation.id} fired for ${contacts.length} contacts`,
       );
+    }
+  }
+
+  // Cron anniversaire — tous les jours à 8h, déclenche les automations pour les contacts dont c'est l'anniversaire
+  @Cron('0 8 * * *')
+  async processBirthdayAutomations() {
+    const automations = await this.prisma.automation.findMany({
+      where: { status: AutomationStatus.Active, trigger: 'date_based' },
+    });
+
+    const todayMM = (new Date().getMonth() + 1).toString().padStart(2, '0');
+    const todayDD = new Date().getDate().toString().padStart(2, '0');
+
+    for (const automation of automations) {
+      const config =
+        (automation.triggerConfig as Record<string, unknown>) ?? {};
+      if (config.type !== 'anniversary') continue;
+
+      // Contacts dont le mois/jour de birthday correspond à aujourd'hui
+      const contacts = await this.prisma.$queryRaw<{ id: string }[]>`
+        SELECT id FROM contacts
+        WHERE "accountId" = ${automation.accountId}
+          AND "optOut" = false
+          AND birthday IS NOT NULL
+          AND TO_CHAR(birthday, 'MM-DD') = ${todayMM + '-' + todayDD}
+      `;
+
+      for (const contact of contacts) {
+        await this.enqueueAutomationExecution(automation, contact.id, 0);
+      }
+      if (contacts.length > 0) {
+        this.logger.log(
+          `Birthday automation ${automation.id}: ${contacts.length} contacts fêtent leur anniversaire aujourd'hui`,
+        );
+      }
     }
   }
 

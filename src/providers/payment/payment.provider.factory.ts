@@ -18,24 +18,34 @@ type VisaProviderName = 'stripe' | 'simulation';
 export class PaymentProviderFactory {
   private readonly logger = new Logger(PaymentProviderFactory.name);
 
+  // Singletons pour que la Map en mémoire (simulation) survive entre les appels
+  private readonly _simulationMM = new SimulationMobileMoneyProvider();
+  private readonly _simulationVisa = new SimulationVisaProvider();
+  private _novasendMM: NovaSendMobileMoneyProvider | null = null;
+  private _stripeVisa: StripeVisaProvider | null = null;
+
   getMobileMoneyProvider(): MobileMoneyProvider {
     const name = (
       process.env.MOBILE_MONEY_PROVIDER || 'simulation'
     ).toLowerCase() as MobileMoneyProviderName;
-    this.logger.log(`Mobile money provider: ${name}`);
 
-    if (name === 'novasend') return new NovaSendMobileMoneyProvider();
-    return new SimulationMobileMoneyProvider();
+    if (name === 'novasend') {
+      this._novasendMM ??= new NovaSendMobileMoneyProvider();
+      return this._novasendMM;
+    }
+    return this._simulationMM;
   }
 
   getVisaProvider(): VisaProvider {
     const name = (
       process.env.VISA_PROVIDER || 'simulation'
     ).toLowerCase() as VisaProviderName;
-    this.logger.log(`Visa provider: ${name}`);
 
-    if (name === 'stripe') return new StripeVisaProvider();
-    return new SimulationVisaProvider();
+    if (name === 'stripe') {
+      this._stripeVisa ??= new StripeVisaProvider();
+      return this._stripeVisa;
+    }
+    return this._simulationVisa;
   }
 
   getHealthStatus() {

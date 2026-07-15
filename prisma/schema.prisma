@@ -88,6 +88,7 @@ model Contact {
   lastName           String?             @db.VarChar(100)
   phone              String?             @db.VarChar(20)
   location           String?             @db.VarChar(100)
+  birthday           DateTime?           @db.Date
   notes              Json?               @default("[]")
   optOutAt           DateTime?           @db.Timestamp(6)
   anonymizedAt       DateTime?           @db.Timestamp(6)

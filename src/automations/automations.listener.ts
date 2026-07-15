@@ -4,6 +4,7 @@ import { AutomationsService } from './automations.service';
 import type {
   CampaignEvent,
   ContactAddedEvent,
+  ContactTagAddedEvent,
   SegmentJoinedEvent,
 } from './automations.types';
 
@@ -56,6 +57,18 @@ export class ContactAddedListener {
     } catch (error: unknown) {
       this.logger.error(
         `Impossible de planifier les automations pour le clic de campagne ${event.campaignId}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  @OnEvent('contact.tag-added')
+  async handleContactTagAdded(event: ContactTagAddedEvent) {
+    try {
+      await this.automationsService.scheduleTagAddedAutomations(event);
+    } catch (error: unknown) {
+      this.logger.error(
+        `Impossible de planifier les automations pour le tag ajouté au contact ${event.contactId}`,
         error instanceof Error ? error.stack : undefined,
       );
     }

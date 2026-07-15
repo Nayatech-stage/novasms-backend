@@ -37,6 +37,7 @@ import { SegmentCreateSchema, SegmentPreviewSchema } from './dto/segment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, RequireRoles } from '../common';
 import type { Request as ExpressRequest } from 'express';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 type TenantRequest = ExpressRequest & { accountId?: string };
 
@@ -64,6 +65,7 @@ export class ContactsController {
   constructor(
     private importService: ImportService,
     private contactsService: ContactsService,
+    private eventEmitter: EventEmitter2,
   ) {}
 
   @Get()
@@ -322,6 +324,14 @@ export class ContactsController {
     const updated = await this.contactsService.update(accountId, id, {
       tags: mergedTags,
     });
+    const newTags = body.tags.filter((t: string) => !existingTags.includes(t));
+    if (newTags.length > 0) {
+      this.eventEmitter.emit('contact.tag-added', {
+        accountId,
+        contactId: id,
+        tags: newTags,
+      });
+    }
     return { success: true, contact: updated };
   }
 

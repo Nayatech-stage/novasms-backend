@@ -21,6 +21,12 @@ export type CampaignEvent = {
   contactId: string;
 };
 
+export type ContactTagAddedEvent = {
+  accountId: string;
+  contactId: string;
+  tags: string[];
+};
+
 export type ExecuteAutomationJob = {
   automationId: string;
   executionId: string;
