@@ -1,5 +1,6 @@
-import { parsePhoneNumber, isValidPhoneNumber } from 'libphonenumber-js';
-import type { CountryCode } from 'libphonenumber-js';
+import { parsePhoneNumber, getExampleNumber } from 'libphonenumber-js';
+import type { CountryCode, Examples } from 'libphonenumber-js';
+import mobileExamples from 'libphonenumber-js/examples.mobile.json';
 
 export type PhoneValidationResult = {
   isValid: boolean;
@@ -9,24 +10,20 @@ export type PhoneValidationResult = {
   message: string | null;
 };
 
-const COUNTRY_HINTS: Record<string, string> = {
-  CI: '+225 07/05/01 XX XX XX XX',
-  SN: '+221 7X XXX XX XX',
-  ML: '+223 XX XX XX XX',
-  BF: '+226 XX XX XX XX',
-  BJ: '+229 XX XX XX XX',
-  TG: '+228 XX XX XX XX',
-  CM: '+237 6X XX XX XX XX',
-  GH: '+233 XX XXX XXXX',
-  NG: '+234 XXX XXX XXXX',
-  FR: '+33 6/7 XX XX XX XX',
-};
+function exampleFor(country: CountryCode): string {
+  try {
+    const ex = getExampleNumber(country, mobileExamples as unknown as Examples);
+    return ex ? ex.formatInternational() : `+${country} XXXXXXXXX`;
+  } catch {
+    return `+${country} XXXXXXXXX`;
+  }
+}
 
 export function validatePhone(
   phone: string,
   defaultCountry: CountryCode = 'CI',
 ): PhoneValidationResult {
-  if (!phone || !phone.trim()) {
+  if (!phone?.trim()) {
     return {
       isValid: false,
       status: 'UNVERIFIED',
@@ -39,17 +36,21 @@ export function validatePhone(
   const raw = phone.trim();
 
   try {
-    const parsed = parsePhoneNumber(raw, defaultCountry);
+    // Numéros avec + : parse international sans pays par défaut
+    const parsed = raw.startsWith('+')
+      ? parsePhoneNumber(raw)
+      : parsePhoneNumber(raw, defaultCountry);
 
-    if (!parsed || !parsed.isValid()) {
-      const hint =
-        COUNTRY_HINTS[defaultCountry] ?? `+${defaultCountry}XXXXXXXXX`;
+    if (!parsed?.isValid()) {
+      const country: CountryCode = (parsed?.country ??
+        defaultCountry) as CountryCode;
+      const hint = exampleFor(country);
       return {
         isValid: false,
         status: 'INVALID',
         formatted: null,
         country: null,
-        message: `Numéro invalide. Format attendu : ${hint}`,
+        message: `Numéro invalide. Exemple attendu : ${hint}`,
       };
     }
 
@@ -61,13 +62,13 @@ export function validatePhone(
       message: null,
     };
   } catch {
+    const hint = exampleFor(defaultCountry);
     return {
       isValid: false,
       status: 'INVALID',
       formatted: null,
       country: null,
-      message:
-        "Format de numéro non reconnu. Incluez l'indicatif pays (ex: +225…)",
+      message: `Format non reconnu. Exemple attendu : ${hint}`,
     };
   }
 }
@@ -93,7 +94,7 @@ export function isValidPhone(
   defaultCountry: CountryCode = 'CI',
 ): boolean {
   try {
-    return isValidPhoneNumber(phone, defaultCountry);
+    return validatePhone(phone, defaultCountry).isValid;
   } catch {
     return false;
   }
