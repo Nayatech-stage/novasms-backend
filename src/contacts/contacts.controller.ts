@@ -38,6 +38,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, RequireRoles } from '../common';
 import type { Request as ExpressRequest } from 'express';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { validatePhoneOrNull } from '../common/phone-validator.util';
 
 type TenantRequest = ExpressRequest & { accountId?: string };
 
@@ -376,6 +377,27 @@ export class ContactsController {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
     return this.contactsService.remove(accountId, id);
+  }
+
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
+  @Delete('bulk/delete')
+  @ApiOperation({ summary: 'Supprimer plusieurs contacts en une requête' })
+  async bulkRemove(
+    @Body() body: { ids: string[] },
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    if (!Array.isArray(body?.ids) || body.ids.length === 0)
+      throw new BadRequestException('ids requis (tableau non vide)');
+    return this.contactsService.bulkRemove(accountId, body.ids);
+  }
+
+  @Get('validate-phone')
+  @ApiOperation({ summary: 'Valider un numéro de téléphone' })
+  validatePhone(@Query('phone') phone: string) {
+    if (!phone) throw new BadRequestException('phone requis');
+    return validatePhoneOrNull(phone);
   }
 
   // --- Segments ---

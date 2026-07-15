@@ -17,6 +17,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { redisConnection } from '../queues/import.queue';
 import { SegmentRecalculationService } from '../queues/segment.recalculation.service';
+import { validatePhoneOrNull } from '../common/phone-validator.util';
 
 export type SegmentLogic = 'AND' | 'OR';
 export type SegmentCriterion = {
@@ -259,12 +260,15 @@ export class ContactsService {
     },
   ): Promise<Contact> {
     try {
+      const phoneStr = typeof data.phone === 'string' ? data.phone : null;
+      const phoneValidation = validatePhoneOrNull(phoneStr);
       const c = await this.prisma.contact.create({
         data: {
           accountId,
           ...data,
           tags: data.tags || [],
           optOut: data.optOut || false,
+          phoneStatus: phoneValidation.status,
         },
       });
       this.segmentRecalculationService
@@ -310,6 +314,21 @@ export class ContactsService {
     return { success: true };
   }
 
+  async bulkRemove(
+    accountId: string,
+    ids: string[],
+  ): Promise<{ success: true; deleted: number }> {
+    if (!ids.length) throw new BadRequestException('Aucun identifiant fourni');
+    const { count } = await this.prisma.contact.deleteMany({
+      where: { accountId, id: { in: ids } },
+    });
+    this.segmentRecalculationService
+      .addRecalculateAccountSegmentsJob(accountId)
+      .catch(() => {});
+    await this.invalidateContactCountCache(accountId);
+    return { success: true, deleted: count };
+  }
+
   async update(
     accountId: string,
     id: string,
@@ -323,7 +342,11 @@ export class ContactsService {
     if (data.firstName !== undefined) payload.firstName = data.firstName;
     if (data.lastName !== undefined) payload.lastName = data.lastName;
     if (data.email !== undefined) payload.email = data.email;
-    if (data.phone !== undefined) payload.phone = data.phone;
+    if (data.phone !== undefined) {
+      payload.phone = data.phone;
+      const phoneStr = typeof data.phone === 'string' ? data.phone : null;
+      payload.phoneStatus = validatePhoneOrNull(phoneStr).status;
+    }
     if (data.location !== undefined) payload.location = data.location;
     if (data.tags !== undefined) payload.tags = data.tags;
     if (data.optOut !== undefined) payload.optOut = data.optOut;
