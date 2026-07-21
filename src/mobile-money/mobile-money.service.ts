@@ -4,7 +4,10 @@ import { randomInt } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import PDFDocument from 'pdfkit';
 import { PaymentProviderFactory } from '../providers/payment/payment.provider.factory';
-import type { MobileMoneyOperator } from '../providers/payment/interfaces/mobile-money.provider.interface';
+import type {
+  MobileMoneyOperator,
+  PaymentSessionParams,
+} from '../providers/payment/interfaces/mobile-money.provider.interface';
 import { CircuitBreaker } from '../common/circuit-breaker.util';
 
 // Re-export pour compatibilité avec les imports existants du controller
@@ -228,6 +231,108 @@ export class MobileMoneyService {
       completedAt: transaction.completedAt,
       paymentUrl: providerResult.paymentUrl,
       reference: providerResult.reference,
+    };
+  }
+
+  /**
+   * Crée une session de paiement NovaSend (/v1/payin/sessions).
+   * Mode universel : pas d'operator ni d'OTP requis côté marchand.
+   * NovaSend détecte l'opérateur depuis le numéro et présente son UI
+   * au client via paymentUrl (fonctionne pour Wave, Orange, MTN, Moov).
+   */
+  async createPaymentSession(params: {
+    userId: string;
+    userEmail?: string;
+    accountId: string;
+    phoneNumber: string;
+    amount: number;
+    customerName?: string;
+    country?: string;
+    currency?: string;
+  }): Promise<
+    MobileMoneyTransaction & { paymentUrl?: string; reference?: string }
+  > {
+    const { userId, userEmail, accountId, phoneNumber, amount, currency } =
+      params;
+
+    if (amount <= 0) {
+      throw new BadRequestException('Le montant doit être supérieur à 0');
+    }
+    if (amount < 500) {
+      throw new BadRequestException('Montant minimum : 500 XOF');
+    }
+
+    const internalId = `MS-${Date.now()}-${randomInt(10000, 99999)}`;
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        accountId,
+        OR: [{ id: userId }, ...(userEmail ? [{ email: userEmail }] : [])],
+      },
+      select: { id: true },
+    });
+    if (!user)
+      throw new BadRequestException('Utilisateur du compte introuvable');
+
+    const transaction = await this.prisma.mobileMoneyTransaction.create({
+      data: {
+        id: internalId,
+        accountId,
+        userId: user.id,
+        operator: 'WAVE',
+        phoneNumber,
+        amount,
+        currency: currency ?? 'XOF',
+        status: 'pending',
+        externalTransactionId: null,
+      },
+    });
+
+    const sessionParams: PaymentSessionParams = {
+      phoneNumber,
+      amount,
+      customerName: params.customerName,
+      country: params.country ?? 'CI',
+      accountId,
+      userId: user.id,
+      userEmail,
+      currency: currency ?? 'XOF',
+    };
+
+    const provider = this.paymentProviderFactory.getMobileMoneyProvider();
+    const result = await this.circuitBreaker.execute(() =>
+      provider.createSession(sessionParams),
+    );
+
+    const paymentUrl = result.paymentUrl;
+    const externalTransactionId = result.transactionId ?? null;
+
+    await this.prisma.mobileMoneyTransaction.update({
+      where: { id: internalId },
+      data: {
+        externalTransactionId,
+        status: result.success ? 'pending' : 'failed',
+      },
+    });
+
+    if (!result.success) {
+      throw new BadRequestException(
+        result.error ?? 'Impossible de créer la session de paiement',
+      );
+    }
+
+    this.logger.log(
+      `Session created — internal=${internalId} external=${externalTransactionId} paymentUrl=${paymentUrl}`,
+    );
+
+    return {
+      ...transaction,
+      id: internalId,
+      transactionId: internalId,
+      operator: transaction.operator as MobileMoneyOperator,
+      status: transaction.status as MobileMoneyTransaction['status'],
+      paymentUrl,
+      reference: result.reference,
     };
   }
 

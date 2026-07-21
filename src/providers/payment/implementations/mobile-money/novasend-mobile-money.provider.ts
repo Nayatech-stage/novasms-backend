@@ -4,6 +4,7 @@ import {
   MobileMoneyProvider,
   MobileMoneyPaymentParams,
   MobileMoneyPaymentResult,
+  PaymentSessionParams,
 } from '../../interfaces/mobile-money.provider.interface';
 
 // Réponse de l'API NovaSend POST /v1/direct/payin et GET /v1/payin/{reference}
@@ -211,6 +212,79 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
         error instanceof Error ? error.message : 'NovaSend MM getStatus failed';
       this.logger.error(`NovaSend MM getStatus error: ${msg}`);
       return { success: false, reference, status: 'failed', error: msg };
+    }
+  }
+
+  /**
+   * Crée une session de paiement via POST /v1/payin/sessions.
+   * Contrairement au direct payin, pas d'operator ni d'OTP requis :
+   * NovaSend détecte l'opérateur depuis le numéro et gère la confirmation
+   * via son propre UI (paymentUrl universel pour Wave, Orange, MTN, Moov).
+   */
+  async createSession(
+    params: PaymentSessionParams,
+  ): Promise<MobileMoneyPaymentResult> {
+    const reference = randomUUID();
+    const idempotencyKey = randomUUID();
+
+    const body = {
+      reference,
+      amount: params.amount,
+      msisdn: params.phoneNumber,
+      customerName: params.customerName ?? 'Client NovaSMS',
+      country: params.country ?? 'CI',
+      action: {
+        successUrl: `${this.frontendUrl}/rechargement?payment=success`,
+        failureUrl: `${this.frontendUrl}/rechargement?payment=failed`,
+      },
+    };
+
+    try {
+      const response = await fetch(`${this.baseUrl}/payin/sessions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: this.buildAuthHeader(),
+          'X-Idempotency-Key': idempotencyKey,
+          'Accept-Language': 'fr',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        let userMessage = `Erreur NovaSend session (${response.status})`;
+        try {
+          const err = JSON.parse(text) as { message?: string };
+          if (err.message) userMessage = err.message;
+        } catch {
+          /* ignore */
+        }
+        this.logger.error(`NovaSend session HTTP ${response.status}: ${text}`);
+        return { success: false, status: 'failed', error: userMessage };
+      }
+
+      const data = (await response.json()) as NovaSendPayinResponse;
+      const status = this.mapStatus(data.status, data.failure);
+
+      this.logger.log(
+        `NovaSend session created — ref=${data.reference} paymentUrl=${data.paymentUrl}`,
+      );
+
+      return {
+        success: true,
+        transactionId: data.id,
+        reference: data.reference,
+        status,
+        paymentUrl: data.paymentUrl,
+      };
+    } catch (error) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'NovaSend createSession failed';
+      this.logger.error(`NovaSend MM createSession error: ${msg}`);
+      return { success: false, status: 'failed', error: msg };
     }
   }
 }

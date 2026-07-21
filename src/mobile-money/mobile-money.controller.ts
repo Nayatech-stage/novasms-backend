@@ -98,6 +98,46 @@ export class MobileMoneyController {
     };
   }
 
+  @Post('session')
+  @ApiOperation({
+    summary:
+      'Créer une session de paiement NovaSend (tous opérateurs, sans OTP)',
+  })
+  async createSession(
+    @Body()
+    body: {
+      phoneNumber: string;
+      amount: number;
+      customerName?: string;
+      country?: string;
+      currency?: string;
+    },
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+
+    const transaction = await this.mobileMoneyService.createPaymentSession({
+      userId: String(req.user?.accountId ?? accountId),
+      userEmail: req.user?.email,
+      accountId: String(accountId),
+      phoneNumber: body.phoneNumber,
+      amount: body.amount,
+      customerName: body.customerName,
+      country: body.country ?? 'CI',
+      currency: body.currency ?? 'XOF',
+    });
+
+    return {
+      success: true,
+      transactionId: transaction.id,
+      paymentUrl: transaction.paymentUrl ?? null,
+      reference: transaction.reference ?? null,
+      message:
+        'Session créée. Redirigez le client vers paymentUrl pour confirmer le paiement.',
+    };
+  }
+
   @Get(':id/status')
   @ApiParam({ name: 'id', description: 'ID interne de la transaction' })
   @ApiOperation({ summary: 'Polling du statut de paiement — RG-48' })

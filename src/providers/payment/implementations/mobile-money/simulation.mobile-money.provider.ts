@@ -3,6 +3,7 @@ import {
   MobileMoneyProvider,
   MobileMoneyPaymentParams,
   MobileMoneyPaymentResult,
+  PaymentSessionParams,
 } from '../../interfaces/mobile-money.provider.interface';
 
 export class SimulationMobileMoneyProvider implements MobileMoneyProvider {
@@ -55,6 +56,25 @@ export class SimulationMobileMoneyProvider implements MobileMoneyProvider {
       status: 'completed',
     };
     this.pending.set(transactionId, result);
+    return result;
+  }
+
+  async createSession(
+    params: PaymentSessionParams,
+  ): Promise<MobileMoneyPaymentResult> {
+    const transactionId = `sim-session-${crypto.randomUUID()}`;
+    this.logger.log(
+      `[SIMULATION] createSession → ${params.phoneNumber} ${params.amount} ${params.currency ?? 'XOF'}`,
+    );
+    const result: MobileMoneyPaymentResult = {
+      success: true,
+      transactionId,
+      reference: transactionId,
+      status: 'pending',
+      paymentUrl: `https://business.novasend.app/link/SIM-${transactionId.slice(-6).toUpperCase()}`,
+    };
+    this.pending.set(transactionId, result);
+    this.initiatedAt.set(transactionId, Date.now());
     return result;
   }
 
