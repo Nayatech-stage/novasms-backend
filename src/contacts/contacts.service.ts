@@ -1094,6 +1094,24 @@ export class ContactsService {
     }
   }
 
+  async addTags(
+    accountId: string,
+    contactId: string,
+    newTags: string[],
+  ): Promise<{ contact: Contact | null; addedTags: string[] }> {
+    const contact = await this.findById(accountId, contactId);
+    if (!contact) throw new NotFoundException('Contact non trouvé');
+    const existingTags = Array.isArray(contact.tags)
+      ? (contact.tags as string[])
+      : [];
+    const mergedTags = [...new Set([...existingTags, ...newTags])];
+    const updated = await this.update(accountId, contactId, {
+      tags: mergedTags,
+    });
+    const addedTags = newTags.filter((t) => !existingTags.includes(t));
+    return { contact: updated, addedTags };
+  }
+
   async addNote(
     accountId: string,
     contactId: string,

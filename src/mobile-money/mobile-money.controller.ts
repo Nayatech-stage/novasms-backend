@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Get,
@@ -8,7 +9,6 @@ import {
   Request,
   Query,
   Res,
-  BadRequestException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -71,15 +71,7 @@ export class MobileMoneyController {
       customerName,
     } = body;
 
-    this.mobileMoneyService.validatePayment(operator, phoneNumber, amount);
-
-    if (operator === 'ORANGE') {
-      if (!otp || !/^\d{4}$/.test(otp)) {
-        throw new BadRequestException(
-          'Orange Money requires a 4-digit OTP (dial #144*82# to get it)',
-        );
-      }
-    }
+    this.mobileMoneyService.validatePayment(operator, phoneNumber, amount, otp);
 
     const transaction = await this.mobileMoneyService.initiateTransaction({
       userId: String(userId),

@@ -118,24 +118,10 @@ export class ContactsController {
     if (!body.fileName || !Array.isArray(body.rows))
       throw new BadRequestException('Fichier ou lignes invalides');
 
-    const mappedRows = body.rows
-      .map((row) => {
-        const c: Record<string, string | string[]> = {};
-        for (const [t, s] of Object.entries(body.mapping || {})) {
-          const v = row[s];
-          if (v === undefined || v === null || v === '') continue;
-          if (t === 'tags') {
-            c.tags = String(v)
-              .split(/[,;|]/)
-              .map((x: string) => x.trim())
-              .filter(Boolean);
-          } else {
-            c[t] = typeof v === 'string' ? v.trim() : String(v).trim();
-          }
-        }
-        return c;
-      })
-      .filter((r) => r.email || r.phone);
+    const mappedRows = this.importService.applyColumnMapping(
+      body.rows,
+      body.mapping || {},
+    );
 
     const result = await this.importService.startImport(
       accountId,
@@ -320,24 +306,19 @@ export class ContactsController {
     if (!accountId) throw new BadRequestException('accountId manquant');
     if (!Array.isArray(body?.tags))
       throw new BadRequestException('tags doit être un tableau');
-    const contact = await this.contactsService.findById(accountId, id);
-    if (!contact) throw new NotFoundException('Contact non trouvé');
-    const existingTags = Array.isArray(contact.tags)
-      ? (contact.tags as string[])
-      : [];
-    const mergedTags = [...new Set([...existingTags, ...body.tags])];
-    const updated = await this.contactsService.update(accountId, id, {
-      tags: mergedTags,
-    });
-    const newTags = body.tags.filter((t: string) => !existingTags.includes(t));
-    if (newTags.length > 0) {
+    const { contact, addedTags } = await this.contactsService.addTags(
+      accountId,
+      id,
+      body.tags,
+    );
+    if (addedTags.length > 0) {
       this.eventEmitter.emit('contact.tag-added', {
         accountId,
         contactId: id,
-        tags: newTags,
+        tags: addedTags,
       });
     }
-    return { success: true, contact: updated };
+    return { success: true, contact };
   }
 
   @Post(':id/opt-out')

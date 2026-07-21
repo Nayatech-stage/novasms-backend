@@ -67,6 +67,31 @@ export class ImportService {
     };
   }
 
+  applyColumnMapping(
+    rows: Array<Record<string, unknown>>,
+    mapping: Record<string, string>,
+  ): ImportRow[] {
+    return rows
+      .map((row) => {
+        const contact: Record<string, string | string[]> = {};
+        for (const [targetField, sourceColumn] of Object.entries(mapping)) {
+          const value = row[sourceColumn];
+          if (value === undefined || value === null || value === '') continue;
+          if (targetField === 'tags') {
+            contact.tags = String(value)
+              .split(/[,;|]/)
+              .map((x) => x.trim())
+              .filter(Boolean);
+          } else {
+            contact[targetField] =
+              typeof value === 'string' ? value.trim() : String(value).trim();
+          }
+        }
+        return contact as ImportRow;
+      })
+      .filter((r) => r.email || r.phone);
+  }
+
   /**
    * Traite un batch de contacts avec déduplication email OU téléphone
    * Conformité RG-11 (déduplication auto) + RG-13 (isolation stricte par accountId)

@@ -419,25 +419,8 @@ export class CampaignsController {
     if (!accountId) throw new Error('accountId manquant');
 
     try {
-      const campaign = await this.campaignsService.get(accountId, id);
-      if (!campaign) {
-        return { success: false, error: 'Campagne non trouvée' };
-      }
-
-      // Can only cancel DRAFT or SCHEDULED
-      if (campaign.status !== 'DRAFT' && campaign.status !== 'SCHEDULED') {
-        return {
-          success: false,
-          error: `Impossible d'annuler une campagne ${campaign.status.toLowerCase()}`,
-        };
-      }
-
       const result = await this.campaignsService.cancelCampaign(accountId, id);
-      return {
-        success: true,
-        message: 'Campagne annulée',
-        data: result,
-      };
+      return { success: true, message: 'Campagne annulée', data: result };
     } catch (error) {
       this.logger.error(
         'Cancel campaign error',

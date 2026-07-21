@@ -90,7 +90,12 @@ export class MobileMoneyService {
     private paymentProviderFactory: PaymentProviderFactory,
   ) {}
 
-  validatePayment(operator: string, phoneNumber: string, amount: number): void {
+  validatePayment(
+    operator: string,
+    phoneNumber: string,
+    amount: number,
+    otp?: string,
+  ): void {
     const rules = OPERATOR_RULES[operator as OperatorKey];
     const min = rules?.min ?? 500;
     const max = rules?.max ?? 1_000_000;
@@ -104,6 +109,14 @@ export class MobileMoneyService {
       throw new BadRequestException(
         `Amount maximum for ${operator}: ${max} XOF`,
       );
+    }
+
+    if (operator === 'ORANGE') {
+      if (!otp || !/^\d{4}$/.test(otp)) {
+        throw new BadRequestException(
+          "Orange Money requiert un code OTP à 4 chiffres (composez #144*82# pour l'obtenir)",
+        );
+      }
     }
 
     if (!rules) return;
