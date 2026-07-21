@@ -26,10 +26,28 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // Sécurité HTTP : X-Frame-Options, CSP, HSTS, XSS-Filter…
+  // CSP activé globalement — Swagger UI autorisé via cdn.jsdelivr.net
   app.use(
     helmet({
-      contentSecurityPolicy: false, // Swagger UI nécessite inline scripts
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
+          styleSrc: ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
+          imgSrc: ["'self'", 'data:', 'cdn.jsdelivr.net'],
+          fontSrc: ["'self'", 'cdn.jsdelivr.net'],
+          connectSrc: ["'self'"],
+          frameSrc: ["'none'"],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: [],
+        },
+      },
       crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
     }),
   );
 

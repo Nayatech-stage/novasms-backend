@@ -5,6 +5,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import PDFDocument from 'pdfkit';
 import { PaymentProviderFactory } from '../providers/payment/payment.provider.factory';
 import type { MobileMoneyOperator } from '../providers/payment/interfaces/mobile-money.provider.interface';
+import { CircuitBreaker } from '../common/circuit-breaker.util';
 
 // Re-export pour compatibilité avec les imports existants du controller
 export type { MobileMoneyOperator };
@@ -76,6 +77,13 @@ export const OPERATOR_MESSAGES: Record<OperatorKey, string> = {
 @Injectable()
 export class MobileMoneyService {
   private readonly logger = new Logger(MobileMoneyService.name);
+
+  private readonly circuitBreaker = new CircuitBreaker({
+    name: 'MobileMoneyProvider',
+    failureThreshold: 5,
+    successThreshold: 2,
+    timeout: 60_000,
+  });
 
   constructor(
     private prisma: PrismaService,
@@ -166,18 +174,20 @@ export class MobileMoneyService {
 
     // Déléguer l'initiation à l'opérateur via le provider (simulation ou NovaSend)
     const provider = this.paymentProviderFactory.getMobileMoneyProvider();
-    const providerResult = await provider.initiatePayment({
-      operator,
-      phoneNumber,
-      amount,
-      currency,
-      description: params.description ?? 'Recharge crédit NovaSMS',
-      accountId,
-      userId: user.id,
-      otp: params.otp,
-      country: params.country ?? 'CI',
-      customerName: params.customerName,
-    });
+    const providerResult = await this.circuitBreaker.execute(() =>
+      provider.initiatePayment({
+        operator,
+        phoneNumber,
+        amount,
+        currency,
+        description: params.description ?? 'Recharge crédit NovaSMS',
+        accountId,
+        userId: user.id,
+        otp: params.otp,
+        country: params.country ?? 'CI',
+        customerName: params.customerName,
+      }),
+    );
 
     // Stocker la référence NovaSend (UUID) en priorité — utilisée pour GET /v1/payin/{reference}
     const externalRef =
@@ -238,7 +248,9 @@ export class MobileMoneyService {
     // Déléguer la validation OTP au provider (simulation: OTP ≥ 4 chars / NovaSend: appel API réel)
     const provider = this.paymentProviderFactory.getMobileMoneyProvider();
     const externalId = transaction.externalTransactionId || transaction.id;
-    const providerResult = await provider.confirmPayment(externalId, otp);
+    const providerResult = await this.circuitBreaker.execute(() =>
+      provider.confirmPayment(externalId, otp),
+    );
 
     if (!providerResult.success) {
       const failedTransaction = await this.prisma.mobileMoneyTransaction.update(
@@ -317,7 +329,9 @@ export class MobileMoneyService {
 
     const provider = this.paymentProviderFactory.getMobileMoneyProvider();
     const ref = transaction.externalTransactionId || transaction.id;
-    const providerResult = await provider.getStatus(ref);
+    const providerResult = await this.circuitBreaker.execute(() =>
+      provider.getStatus(ref),
+    );
 
     if (providerResult.status === 'completed') {
       const updated = await this.prisma.mobileMoneyTransaction.updateMany({
