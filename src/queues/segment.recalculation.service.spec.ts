@@ -1,5 +1,5 @@
 import { SegmentRecalculationService } from './segment.recalculation.service';
-import type { Queue } from 'bull';
+import type { Queue } from 'bullmq';
 
 describe('SegmentRecalculationService — file de recalcul (EN-1652)', () => {
   const queue = {
