@@ -99,6 +99,11 @@ export class MobileMoneyService {
     amount: number,
     otp?: string,
   ): void {
+    if (!(operator in OPERATOR_RULES)) {
+      throw new BadRequestException(
+        `Opérateur non supporté: ${operator}. Attendus : WAVE, ORANGE, MOMO, MOOV`,
+      );
+    }
     const rules = OPERATOR_RULES[operator as OperatorKey];
     const min = rules?.min ?? 500;
     const max = rules?.max ?? 1_000_000;
@@ -208,11 +213,18 @@ export class MobileMoneyService {
     // Stocker la référence NovaSend (UUID) en priorité — utilisée pour GET /v1/payin/{reference}
     const externalRef =
       providerResult.reference || providerResult.transactionId;
-    if (externalRef) {
-      await this.prisma.mobileMoneyTransaction.update({
-        where: { id: internalTransactionId },
-        data: { externalTransactionId: externalRef },
-      });
+    await this.prisma.mobileMoneyTransaction.update({
+      where: { id: internalTransactionId },
+      data: {
+        ...(externalRef ? { externalTransactionId: externalRef } : {}),
+        status: providerResult.success ? 'pending' : 'failed',
+      },
+    });
+
+    if (!providerResult.success) {
+      throw new BadRequestException(
+        providerResult.error ?? "Échec de l'initiation du paiement",
+      );
     }
 
     return {
@@ -305,7 +317,9 @@ export class MobileMoneyService {
     );
 
     const paymentUrl = result.paymentUrl;
-    const externalTransactionId = result.transactionId ?? null;
+    // Stocker reference (notre UUID) en priorité — utilisé par GET /v1/payin/{reference}
+    const externalTransactionId =
+      result.reference ?? result.transactionId ?? null;
 
     await this.prisma.mobileMoneyTransaction.update({
       where: { id: internalId },
