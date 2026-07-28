@@ -111,6 +111,7 @@ export class MobileMoneyController {
       customerName?: string;
       country?: string;
       currency?: string;
+      operator?: 'WAVE' | 'ORANGE' | 'MOMO' | 'MOOV';
     },
     @Request() req: TenantRequest,
   ) {
@@ -126,6 +127,7 @@ export class MobileMoneyController {
       customerName: body.customerName,
       country: body.country ?? 'CI',
       currency: body.currency ?? 'XOF',
+      operator: body.operator,
     });
 
     return {

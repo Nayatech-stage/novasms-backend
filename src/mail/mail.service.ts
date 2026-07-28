@@ -360,7 +360,11 @@ export class MailService {
     }
   }
 
-  async sendInvitationEmail(email: string, token: string, invitedBy: string) {
+  async sendInvitationEmail(
+    email: string,
+    token: string,
+    invitedBy: string,
+  ): Promise<void> {
     const inviteUrl = `${resolvePublicFrontendUrl()}/accept-invitation/${token}`;
     const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
     const subject = `Invitation à rejoindre l'équipe NovaSMS`;
@@ -374,15 +378,26 @@ export class MailService {
       </div>
     `;
 
+    // En mode test, rediriger vers RESEND_TEST_RECIPIENT (comme les autres emails)
+    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const toRecipients = testRecipient ? [testRecipient] : [email];
+    if (testRecipient && testRecipient !== email) {
+      this.logger.warn(
+        `TEST MODE: redirection invitation pour ${email} → ${testRecipient}`,
+      );
+    }
+
     if (this.transporter) {
       try {
         await this.transporter.sendMail({
           from,
-          to: email,
+          to: toRecipients,
           subject,
           html: htmlContent,
         });
-        this.logger.log(`Invitation envoyée à ${email} (DEV)`);
+        this.logger.log(
+          `Invitation envoyée à ${toRecipients.join(', ')} (DEV-SMTP)`,
+        );
       } catch (error: unknown) {
         this.logger.error(
           `Erreur invitation SMTP: ${(error as Error).message}`,
@@ -392,20 +407,21 @@ export class MailService {
     }
 
     if (this.resend) {
-      try {
-        const result = await this.resend.emails.send({
-          from,
-          to: email,
-          subject,
-          html: htmlContent,
-        });
-        if (result.error) throw new Error(result.error.message);
-        this.logger.log(`Invitation envoyée à ${email} (Resend)`);
-      } catch (error: unknown) {
-        this.logger.error(
-          `Erreur Resend invitation: ${(error as Error).message}`,
+      const result = await this.resend.emails.send({
+        from,
+        to: toRecipients,
+        subject,
+        html: htmlContent,
+      });
+      if (result.error) {
+        this.logger.error(`Erreur Resend invitation: ${result.error.message}`);
+        throw new Error(
+          `Échec envoi email d'invitation : ${result.error.message}`,
         );
       }
+      this.logger.log(
+        `Invitation envoyée à ${toRecipients.join(', ')} (Resend)`,
+      );
     }
   }
 }

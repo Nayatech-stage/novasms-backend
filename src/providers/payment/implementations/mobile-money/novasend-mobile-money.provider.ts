@@ -48,7 +48,7 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
   private readonly frontendUrl: string;
 
   constructor() {
-    const apiKey = process.env.NOVASEND_MM_API_KEY?.trim();
+    const apiKey = process.env.NOVASEND_MM_API_KEY || '';
     const apiClient = process.env.NOVASEND_MM_API_CLIENT?.trim();
     if (!apiKey || !apiClient) {
       throw new Error(
@@ -57,9 +57,7 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
     }
     this.apiKey = apiKey;
     this.apiClient = apiClient;
-    this.baseUrl =
-      process.env.NOVASEND_MM_BASE_URL?.trim().replace(/\/$/, '') ||
-      'https://business.novasend.app/v1';
+    this.baseUrl = process.env.NOVASEND_MM_BASE_URL || '';
     this.frontendUrl =
       process.env.FRONTEND_URL?.trim().replace(/\/$/, '') ||
       'http://localhost:5173';
@@ -101,7 +99,7 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
         amount: params.amount,
         msisdn: params.phoneNumber,
         provider: params.operator,
-        country: params.country ?? 'CI',
+        country: params.country,
         ...(params.otp ? { otp: params.otp } : {}),
       },
       action: {

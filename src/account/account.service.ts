@@ -215,6 +215,19 @@ export class AccountService {
     if (existing)
       throw new BadRequestException("Cet email fait déjà partie de l'équipe");
 
+    const pendingInvite = await this.prisma.invitation.findFirst({
+      where: {
+        email: body.email.trim(),
+        accountId,
+        status: 'Sent',
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (pendingInvite)
+      throw new BadRequestException(
+        'Une invitation est déjà en attente pour cet email',
+      );
+
     const token = randomUUID();
     const invitation = await this.prisma.invitation.create({
       data: {
@@ -227,7 +240,19 @@ export class AccountService {
       },
     });
 
-    await this.mail.sendInvitationEmail(invitation.email, token, inviterEmail);
+    try {
+      await this.mail.sendInvitationEmail(
+        invitation.email,
+        token,
+        inviterEmail,
+      );
+    } catch (mailError) {
+      // Si l'envoi échoue, supprimer l'invitation pour éviter un fantôme en DB
+      await this.prisma.invitation.delete({ where: { id: invitation.id } });
+      throw new BadRequestException(
+        `Invitation créée mais email non envoyé : ${(mailError as Error).message}`,
+      );
+    }
     return invitation;
   }
 
