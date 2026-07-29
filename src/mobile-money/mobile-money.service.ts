@@ -48,9 +48,9 @@ const OPERATOR_RULES: Record<
   OperatorKey,
   { min: number; max: number; prefixes: string[] }
 > = {
-  WAVE: { min: 500, max: 500_000, prefixes: ['01', '05', '07', '27'] },
+  WAVE: { min: 300, max: 500_000, prefixes: ['01', '05', '07', '27'] },
   ORANGE: {
-    min: 500,
+    min: 300,
     max: 300_000,
     prefixes: [
       '05',
@@ -66,8 +66,8 @@ const OPERATOR_RULES: Record<
       '97',
     ],
   },
-  MOMO: { min: 500, max: 500_000, prefixes: ['05', '25', '45', '65'] },
-  MOOV: { min: 500, max: 300_000, prefixes: ['01', '41', '61'] },
+  MOMO: { min: 300, max: 500_000, prefixes: ['05', '25', '45', '65'] },
+  MOOV: { min: 300, max: 300_000, prefixes: ['01', '41', '61'] },
 };
 
 export const OPERATOR_MESSAGES: Record<OperatorKey, string> = {
@@ -271,8 +271,8 @@ export class MobileMoneyService {
     if (amount <= 0) {
       throw new BadRequestException('Le montant doit être supérieur à 0');
     }
-    if (amount < 500) {
-      throw new BadRequestException('Montant minimum : 500 XOF');
+    if (amount < 300) {
+      throw new BadRequestException('Montant minimum : 300 XOF');
     }
 
     const internalId = `MS-${Date.now()}-${randomInt(10000, 99999)}`;
