@@ -623,3 +623,12 @@ model WebhookSubscription {
 
   @@map("webhook_subscriptions")
 }
+
+
+model SystemConfig {
+  key       String   @id @db.VarChar(100)
+  value     String   @db.VarChar(500)
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
+}

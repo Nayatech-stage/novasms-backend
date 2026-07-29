@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { SystemConfigService } from '../common/system-config.service';
 import { randomInt } from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import PDFDocument from 'pdfkit';
@@ -91,21 +92,23 @@ export class MobileMoneyService {
   constructor(
     private prisma: PrismaService,
     private paymentProviderFactory: PaymentProviderFactory,
+    private systemConfig: SystemConfigService,
   ) {}
 
-  validatePayment(
+  async validatePayment(
     operator: string,
     phoneNumber: string,
     amount: number,
     otp?: string,
-  ): void {
+  ): Promise<void> {
     if (!(operator in OPERATOR_RULES)) {
       throw new BadRequestException(
         `Opérateur non supporté: ${operator}. Attendus : WAVE, ORANGE, MOMO, MOOV`,
       );
     }
     const rules = OPERATOR_RULES[operator as OperatorKey];
-    const min = rules?.min ?? 500;
+    const globalMin = await this.systemConfig.getNumber('mm_min_amount', 300);
+    const min = Math.max(globalMin, rules?.min ?? 300);
     const max = rules?.max ?? 1_000_000;
 
     if (amount < min) {
@@ -271,8 +274,9 @@ export class MobileMoneyService {
     if (amount <= 0) {
       throw new BadRequestException('Le montant doit être supérieur à 0');
     }
-    if (amount < 300) {
-      throw new BadRequestException('Montant minimum : 300 XOF');
+    const minAmount = await this.systemConfig.getNumber('mm_min_amount', 300);
+    if (amount < minAmount) {
+      throw new BadRequestException(`Montant minimum : ${minAmount} XOF`);
     }
 
     const internalId = `MS-${Date.now()}-${randomInt(10000, 99999)}`;

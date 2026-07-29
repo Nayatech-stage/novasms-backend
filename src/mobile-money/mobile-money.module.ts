@@ -3,10 +3,11 @@ import { MobileMoneyController } from './mobile-money.controller';
 import { MobileMoneyService } from './mobile-money.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { PaymentProviderFactory } from '../providers/payment/payment.provider.factory';
+import { SystemConfigService } from '../common/system-config.service';
 
 @Module({
   imports: [PrismaModule],
-  providers: [MobileMoneyService, PaymentProviderFactory],
+  providers: [MobileMoneyService, PaymentProviderFactory, SystemConfigService],
   controllers: [MobileMoneyController],
   exports: [MobileMoneyService],
 })

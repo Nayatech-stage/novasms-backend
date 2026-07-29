@@ -71,7 +71,12 @@ export class MobileMoneyController {
       customerName,
     } = body;
 
-    this.mobileMoneyService.validatePayment(operator, phoneNumber, amount, otp);
+    await this.mobileMoneyService.validatePayment(
+      operator,
+      phoneNumber,
+      amount,
+      otp,
+    );
 
     const transaction = await this.mobileMoneyService.initiateTransaction({
       userId: String(userId),
