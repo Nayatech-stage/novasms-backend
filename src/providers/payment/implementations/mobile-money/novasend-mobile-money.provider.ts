@@ -137,7 +137,7 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
       const status = this.mapStatus(data.status, data.failure);
 
       this.logger.log(
-        `NovaSend payin initiated — ref=${data.reference} status=${data.status} operator=${params.operator}`,
+        `NovaSend payin initiated — id=${data.id} ref=${data.reference} status=${data.status} operator=${params.operator} confirmationRequired=${data.confirmationRequired} confirmationStatus=${data.confirmationStatus} paymentUrl=${data.paymentUrl ?? 'none'}`,
       );
 
       return {
@@ -184,8 +184,9 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
       });
 
       if (!response.ok) {
+        const errText = await response.text();
         this.logger.error(
-          `NovaSend status HTTP ${response.status} for ref=${reference}`,
+          `NovaSend status HTTP ${response.status} for ref=${reference} — ${errText}`,
         );
         return {
           success: false,
@@ -197,6 +198,10 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
 
       const data = (await response.json()) as NovaSendPayinResponse;
       const status = this.mapStatus(data.status, data.failure);
+
+      this.logger.log(
+        `NovaSend getStatus — ref=${reference} novasendStatus=${data.status} confirmationStatus=${data.confirmationStatus} mappedStatus=${status} failure=${JSON.stringify(data.failure)}`,
+      );
 
       return {
         success: status === 'completed',

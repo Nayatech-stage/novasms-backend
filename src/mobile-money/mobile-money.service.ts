@@ -210,9 +210,9 @@ export class MobileMoneyService {
       }),
     );
 
-    // GET /v1/payin/{reference} attend la reference UUID marchand, pas le pr_...
+    // GET /v1/payin/{id} attend l'ID NovaSend (pr_...), pas notre UUID marchand
     const externalRef =
-      providerResult.reference || providerResult.transactionId;
+      providerResult.transactionId || providerResult.reference;
     await this.prisma.mobileMoneyTransaction.update({
       where: { id: internalTransactionId },
       data: {
@@ -318,9 +318,9 @@ export class MobileMoneyService {
     );
 
     const paymentUrl = result.paymentUrl;
-    // GET /v1/payin/{reference} attend la reference UUID marchand, pas le pr_...
+    // GET /v1/payin/{id} attend l'ID NovaSend (pr_...), pas notre UUID marchand
     const externalTransactionId =
-      result.reference ?? result.transactionId ?? null;
+      result.transactionId ?? result.reference ?? null;
 
     await this.prisma.mobileMoneyTransaction.update({
       where: { id: internalId },
