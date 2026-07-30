@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MobileMoneyController } from './mobile-money.controller';
+import { MobileMoneyWebhookController } from './mobile-money.webhook.controller';
 import { MobileMoneyService } from './mobile-money.service';
 import { MobileMoneyReconciliationService } from './mobile-money.reconciliation.service';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -14,7 +15,7 @@ import { SystemConfigService } from '../common/system-config.service';
     SystemConfigService,
     MobileMoneyReconciliationService,
   ],
-  controllers: [MobileMoneyController],
+  controllers: [MobileMoneyController, MobileMoneyWebhookController],
   exports: [MobileMoneyService],
 })
 export class MobileMoneyModule {}
