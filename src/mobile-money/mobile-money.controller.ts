@@ -20,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { MobileMoneyService, OPERATOR_MESSAGES } from './mobile-money.service';
+import { MobileMoneyReconciliationService } from './mobile-money.reconciliation.service';
 import type { Request as ExpressRequest } from 'express';
 
 type TenantRequest = ExpressRequest & {
@@ -32,7 +33,37 @@ type TenantRequest = ExpressRequest & {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 export class MobileMoneyController {
-  constructor(private mobileMoneyService: MobileMoneyService) {}
+  constructor(
+    private mobileMoneyService: MobileMoneyService,
+    private reconciliationService: MobileMoneyReconciliationService,
+  ) {}
+
+  /**
+   * Webhook NovaSend — appelé par NovaSend quand un paiement change de statut.
+   * PAS de JwtAuthGuard : NovaSend appelle cet endpoint directement.
+   * Sécurisé par vérification du secret dans le header X-Webhook-Secret.
+   */
+  @Post('webhook/novasend')
+  @ApiOperation({
+    summary: 'Webhook NovaSend — notification de paiement confirmé',
+  })
+  async novasendWebhook(
+    @Body()
+    body: { id: string; reference: string; status: string; failure?: unknown },
+    @Request() req: ExpressRequest,
+  ) {
+    const secret = process.env.NOVASEND_WEBHOOK_SECRET;
+    if (secret) {
+      const received = (req.headers as Record<string, string>)[
+        'x-webhook-secret'
+      ];
+      if (received !== secret) {
+        return { success: false, message: 'Unauthorized' };
+      }
+    }
+    const result = await this.reconciliationService.handleWebhook(body);
+    return { success: true, ...result };
+  }
 
   @Post('initiate')
   @ApiOperation({
