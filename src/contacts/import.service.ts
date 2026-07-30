@@ -150,6 +150,26 @@ export class ImportService {
         (contact.email && existingSet.has(contact.email)) ||
         (phoneKey && existingSet.has(phoneKey))
       ) {
+        // Mise à jour des champs enrichis (tags, localisation) si la nouvelle
+        // donnée est non vide — sans écraser les autres champs existants
+        const hasTags = Array.isArray(contact.tags) && contact.tags.length > 0;
+        const hasLocation = Boolean(contact.location);
+        if (hasTags || hasLocation) {
+          try {
+            const where = contact.email
+              ? { accountId_email: { accountId, email: contact.email } }
+              : { accountId_phone: { accountId, phone: phoneKey! } };
+            await this.prisma.contact.update({
+              where,
+              data: {
+                ...(hasTags ? { tags: contact.tags } : {}),
+                ...(hasLocation ? { location: contact.location } : {}),
+              },
+            });
+          } catch {
+            // contact introuvable ou contrainte unique — on ignore
+          }
+        }
         result.duplicates++;
         result.details.push({ row: contact, status: 'duplicate' });
         continue;
@@ -170,6 +190,7 @@ export class ImportService {
             phone: phoneKey || null,
             firstName: contact.firstName || null,
             lastName: contact.lastName || null,
+            location: contact.location || null,
             tags: contact.tags || [],
             optOut: false,
             phoneStatus: phoneValidation.status,

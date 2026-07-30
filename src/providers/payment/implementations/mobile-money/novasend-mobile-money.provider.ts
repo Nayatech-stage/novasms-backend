@@ -58,9 +58,13 @@ export class NovaSendMobileMoneyProvider implements MobileMoneyProvider {
     this.apiKey = apiKey;
     this.apiClient = apiClient;
     this.baseUrl = process.env.NOVASEND_MM_BASE_URL || '';
-    this.frontendUrl =
-      process.env.FRONTEND_URL?.trim().replace(/\/$/, '') ||
-      'http://localhost:5173';
+    this.frontendUrl = (
+      process.env.NOVASEND_ACTION_URL ||
+      process.env.FRONTEND_URL ||
+      'http://localhost:5173'
+    )
+      .trim()
+      .replace(/\/$/, '');
   }
 
   /** Authorization: Basic base64(api_key:api_client) */
