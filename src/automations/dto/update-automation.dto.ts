@@ -3,6 +3,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  ValidateIf,
   Min,
   MinLength,
   IsObject,
@@ -24,6 +25,9 @@ export class UpdateAutomationDto {
     'campaign_opened',
     'link_clicked',
     'date_based',
+    'birthday',
+    'inactivity_window',
+    'recurring_schedule',
   ])
   trigger?:
     | 'contact_added'
@@ -32,7 +36,10 @@ export class UpdateAutomationDto {
     | 'tag_added'
     | 'campaign_opened'
     | 'link_clicked'
-    | 'date_based';
+    | 'date_based'
+    | 'birthday'
+    | 'inactivity_window'
+    | 'recurring_schedule';
 
   @IsOptional()
   @IsObject()
@@ -49,10 +56,12 @@ export class UpdateAutomationDto {
   channel?: 'Email' | 'SMS' | 'WhatsApp';
 
   @IsOptional()
+  @ValidateIf((o) => o.templateId !== null)
   @IsString()
   templateId?: string | null;
 
   @IsOptional()
+  @ValidateIf((o) => o.campaignId !== null)
   @IsString()
   campaignId?: string | null;
 

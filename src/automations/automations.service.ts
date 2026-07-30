@@ -333,8 +333,9 @@ export class AutomationsService {
       const config =
         (automation.triggerConfig as Record<string, unknown>) ?? {};
       const targetTag = config.tag as string | undefined;
-      // Si aucun tag cible configuré, déclencher pour tout ajout. Sinon, vérifier le match.
-      if (!targetTag || event.tags.includes(targetTag)) {
+      // Si aucun tag cible configuré → on skip (évite de déclencher toutes les automations)
+      if (!targetTag) continue;
+      if (event.tags.includes(targetTag)) {
         await this.enqueueAutomationExecution(automation, contact.id, 0);
       }
     }
@@ -459,7 +460,10 @@ export class AutomationsService {
   @Cron('0 8 * * *')
   async processBirthdayAutomations() {
     const automations = await this.prisma.automation.findMany({
-      where: { status: AutomationStatus.Active, trigger: 'date_based' },
+      where: {
+        status: AutomationStatus.Active,
+        trigger: { in: ['date_based', 'birthday'] },
+      },
     });
 
     const todayMM = (new Date().getMonth() + 1).toString().padStart(2, '0');
@@ -470,13 +474,21 @@ export class AutomationsService {
         (automation.triggerConfig as Record<string, unknown>) ?? {};
       if (config.type !== 'anniversary') continue;
 
-      // Contacts dont le mois/jour de birthday correspond à aujourd'hui
+      // daysOffset : négatif = avant l'anniversaire, positif = après
+      const offset =
+        typeof config.daysOffset === 'number' ? config.daysOffset : 0;
+      const targetDate = new Date();
+      targetDate.setDate(targetDate.getDate() - offset); // -(-7) = +7 → 7j avant
+      const targetMM = (targetDate.getMonth() + 1).toString().padStart(2, '0');
+      const targetDD = targetDate.getDate().toString().padStart(2, '0');
+
+      // Contacts dont le mois/jour de birthday correspond à la date cible
       const contacts = await this.prisma.$queryRaw<{ id: string }[]>`
         SELECT id FROM contacts
         WHERE "accountId" = ${automation.accountId}
           AND "optOut" = false
           AND birthday IS NOT NULL
-          AND TO_CHAR(birthday, 'MM-DD') = ${todayMM + '-' + todayDD}
+          AND TO_CHAR(birthday, 'MM-DD') = ${targetMM + '-' + targetDD}
       `;
 
       for (const contact of contacts) {
@@ -495,7 +507,7 @@ export class AutomationsService {
     const automations = await this.prisma.automation.findMany({
       where: {
         status: AutomationStatus.Active,
-        trigger: 'date_based',
+        trigger: { in: ['date_based', 'birthday'] },
       },
     });
 

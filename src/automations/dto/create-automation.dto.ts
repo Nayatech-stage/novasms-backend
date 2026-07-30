@@ -22,6 +22,7 @@ export class CreateAutomationDto {
     'campaign_opened',
     'link_clicked',
     'date_based',
+    'birthday',
     'inactivity_window',
     'recurring_schedule',
   ])
@@ -33,6 +34,7 @@ export class CreateAutomationDto {
     | 'campaign_opened'
     | 'link_clicked'
     | 'date_based'
+    | 'birthday'
     | 'inactivity_window'
     | 'recurring_schedule';
 
