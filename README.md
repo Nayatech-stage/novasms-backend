@@ -70,6 +70,61 @@ $ mau deploy
 
 With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
 
+## Providers email/SMS
+
+### Resend
+
+Pour tester l'envoi email réel en dev ou en staging, gardez un `RESEND_API_KEY` valide et utilisez un sender vérifié.
+
+```env
+EMAIL_PROVIDER=resend
+RESEND_FROM=NovaSMS <onboarding@resend.dev>
+RESEND_TEST_RECIPIENT=romualdndri9@gmail.com
+```
+
+Si vous avez votre domaine, remplacez simplement `RESEND_FROM` par un expéditeur du domaine vérifié.
+
+### Twilio
+
+Twilio Trial ne permet l'envoi qu'aux numéros vérifiés. Pour envoyer à n'importe quel numéro, passez le compte en billing actif et renseignez:
+
+```env
+SMS_PROVIDER=twilio
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_PHONE_NUMBER=
+```
+
+### Africa's Talking
+
+Pour les tests SMS en Afrique de l'Ouest, vous pouvez basculer sur Africa's Talking:
+
+```env
+SMS_PROVIDER=africastalking
+AFRICASTALKING_API_KEY=
+AFRICASTALKING_USERNAME=
+AFRICASTALKING_SENDER_ID=
+```
+
+L'état courant des providers est exposé via `GET /api/status` et `GET /api/providers/health`.
+
+## MinIO (local object storage)
+
+We use MinIO for local development to host campaign images. The repository includes a MinIO service in `docker-compose.yml` which mirrors an S3-compatible endpoint.
+
+Quick start (from project root):
+
+```bash
+docker-compose up -d minio
+# wait a few seconds, then open the MinIO console (default credentials in apps/backend/.env.example)
+```
+
+Create the bucket named in `CAMPAIGN_IMAGE_BUCKET` (default `novasms-campaign-images`) and set it public if you want images to be served directly.
+
+When moving to staging/production, set `S3_ENDPOINT` to your storage's public URL and ensure `CAMPAIGN_IMAGE_BUCKET` points to the correct bucket. If you prefer private buckets, use the presign endpoint:
+
+`GET /api/campaigns/images/:fileName/presign?expires=3600` — returns a presigned GET URL for the image.
+
 ## Resources
 
 Check out a few resources that may come in handy when working with NestJS:

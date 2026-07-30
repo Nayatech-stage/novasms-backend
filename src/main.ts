@@ -1,32 +1,135 @@
 import { NestFactory } from '@nestjs/core';
+import * as bodyParser from 'body-parser';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import { initImportWorker } from './queues/import.queue';
+import { ImportService } from './contacts/import.service';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+
+const logger = new Logger('Bootstrap');
+
+function buildCorsOrigins(): (RegExp | string)[] {
+  const origins: (RegExp | string)[] = [
+    /^http:\/\/localhost(:\d+)?$/,
+    /^http:\/\/127\.0\.0\.1(:\d+)?$/,
+  ];
+  const prod = process.env.FRONTEND_URL?.trim();
+  if (prod) origins.push(prod);
+  return origins;
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Préfixe global pour toutes les routes API
   app.setGlobalPrefix('api');
 
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  // Sécurité HTTP : X-Frame-Options, CSP, HSTS, XSS-Filter…
+  // CSP activé globalement — Swagger UI autorisé via cdn.jsdelivr.net
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
+          styleSrc: ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
+          imgSrc: ["'self'", 'data:', 'cdn.jsdelivr.net'],
+          fontSrc: ["'self'", 'cdn.jsdelivr.net'],
+          connectSrc: ["'self'"],
+          frameSrc: ["'none'"],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: [],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
+    }),
+  );
+
+  // CORS doit être activé AVANT bodyParser pour que les headers
+  // soient présents même sur les réponses d'erreur (413, 401, etc.)
   app.enableCors({
-    origin: [/^http:\/\/localhost(:\d+)?$/, /^http:\/\/127\.0\.0\.1(:\d+)?$/],
+    origin: buildCorsOrigins(),
     credentials: true,
   });
 
+  // Capture raw body + limite portée à 10 Mo pour les imports CSV en chunks
+  app.use(
+    bodyParser.json({
+      limit: '10mb',
+      verify: (req, _res, buf: Buffer) => {
+        (req as typeof req & { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
+
+  app.useGlobalFilters(new GlobalExceptionFilter());
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+
   const config = new DocumentBuilder()
     .setTitle('NovaSMS API')
-    .setDescription('API documentation for NovaSMS platform')
+    .setDescription(
+      [
+        '## NovaSMS Integration API',
+        '',
+        '### Authentication',
+        'All `/api/v1/*` routes require an API key:',
+        '`Authorization: Bearer nvsms_xxx` or `X-Api-Key: nvsms_xxx`',
+        '',
+        'Create your keys in **Settings -> API Keys**.',
+        '',
+        '### Limits',
+        '- 60 requests/minute per key',
+        '- 500 recipients max per SMS call',
+        '- 10 active keys per account',
+      ].join('\n'),
+    )
     .setVersion('1.0')
     .addTag('Authentification')
+    .addTag(
+      'API Publique v1',
+      'Routes accessible via NovaSMS API key (nvsms_...)',
+    )
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'nvsms_...',
+        description: 'NovaSMS API key (Settings -> API Keys)',
+        in: 'header',
+      },
+      'api-key',
+    )
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
+      'JWT',
+    )
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('api/docs', app, document, {
+    swaggerOptions: { persistAuthorization: true, tagsSorter: 'alpha' },
+  });
+
+  // 🔧 Initialize import worker after app creation
+  try {
+    const importService = app.get(ImportService);
+    if (importService) {
+      initImportWorker(importService);
+      logger.log('Import worker initialized');
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`Could not initialize import worker: ${msg}`);
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port, '0.0.0.0');
-  console.log('🚀 Backend running on http://localhost:' + port);
-  console.log('📖 Swagger docs: http://localhost:' + port + '/api/docs');
+  logger.log(`Backend running on http://localhost:${port}`);
+  logger.log(`Swagger docs: http://localhost:${port}/api/docs`);
 }
 void bootstrap();

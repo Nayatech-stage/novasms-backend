@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Process, Processor } from '@nestjs/bull';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import type { Job } from 'bull';
+import type { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { ContactsService } from '../contacts/contacts.service';
 
@@ -18,24 +17,37 @@ const toError = (error: unknown): Error => {
 };
 
 export interface SegmentRecalculationJob {
-  segmentId: string;
+  segmentId?: string;
   accountId: string;
 }
 
 @Processor('segment-recalculation')
-export class SegmentRecalculationProcessor {
+export class SegmentRecalculationProcessor extends WorkerHost {
   private readonly logger = new Logger(SegmentRecalculationProcessor.name);
 
   constructor(
     private prisma: PrismaService,
     private contactsService: ContactsService,
-  ) {}
+  ) {
+    super();
+  }
 
-  @Process({
-    name: 'recalculate-segment',
-    concurrency: 5,
-  })
-  async handleRecalculateSegment(job: Job<SegmentRecalculationJob>) {
+  async process(job: Job<SegmentRecalculationJob>) {
+    // Route to correct handler based on job type
+    if (job.data.segmentId) {
+      return this.handleRecalculateSegment(
+        job as Job<{ segmentId: string; accountId: string }>,
+      );
+    } else {
+      return this.handleRecalculateAccountSegments(
+        job as Job<{ accountId: string }>,
+      );
+    }
+  }
+
+  async handleRecalculateSegment(
+    job: Job<{ segmentId: string; accountId: string }>,
+  ) {
     const { segmentId, accountId } = job.data;
 
     this.logger.log(
@@ -71,6 +83,7 @@ export class SegmentRecalculationProcessor {
       );
 
       // Build the where clause with tenant isolation
+
       const where = this.contactsService.buildWhereForSegment(
         accountId,
         parsed.logic,
@@ -78,6 +91,7 @@ export class SegmentRecalculationProcessor {
       );
 
       // Count matching contacts
+
       const count = await this.prisma.contact.count({ where });
 
       // Update the segment with the new count
@@ -104,10 +118,6 @@ export class SegmentRecalculationProcessor {
     }
   }
 
-  @Process({
-    name: 'recalculate-account-segments',
-    concurrency: 1,
-  })
   async handleRecalculateAccountSegments(job: Job<{ accountId: string }>) {
     const { accountId } = job.data;
 
@@ -135,6 +145,7 @@ export class SegmentRecalculationProcessor {
           );
 
           // Build the where clause with tenant isolation
+
           const where = this.contactsService.buildWhereForSegment(
             accountId,
             parsed.logic,
@@ -142,6 +153,7 @@ export class SegmentRecalculationProcessor {
           );
 
           // Count matching contacts
+
           const count = await this.prisma.contact.count({ where });
 
           // Update the segment with the new count

@@ -1,20 +1,44 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument */
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { importQueue } from '../queues/import.queue';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import * as readline from 'readline';
+import { randomUUID } from 'crypto';
+import ExcelJS from 'exceljs';
+import { validatePhoneOrNull } from '../common/phone-validator.util';
+import type { Job } from 'bullmq';
+
+export type ImportRow = {
+  email?: string;
+  phone?: string | number;
+  firstName?: string;
+  lastName?: string;
+  location?: string;
+  tags?: string[];
+};
 
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
   private readonly BATCH_SIZE = 500; // RG-08: performance — traitement par lots
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Lance un import asynchrone via BullMQ
    * Conformité RG-08 (import 50k lignes < 60s) + RG-13 (isolation par accountId)
    */
-  async startImport(accountId: string, fileName: string, mappedData: any[]) {
+  async startImport(
+    accountId: string,
+    fileName: string,
+    mappedData: ImportRow[],
+  ) {
     const jobId = `import-${accountId}-${Date.now()}`;
 
     await importQueue.add(
@@ -43,17 +67,43 @@ export class ImportService {
     };
   }
 
+  applyColumnMapping(
+    rows: Array<Record<string, unknown>>,
+    mapping: Record<string, string>,
+  ): ImportRow[] {
+    return rows
+      .map((row) => {
+        const contact: Record<string, string | string[]> = {};
+        for (const [targetField, sourceColumn] of Object.entries(mapping)) {
+          const value = row[sourceColumn];
+          if (value === undefined || value === null || value === '') continue;
+          if (targetField === 'tags') {
+            contact.tags = String(value)
+              .split(/[,;|]/)
+              .map((x) => x.trim())
+              .filter(Boolean);
+          } else {
+            contact[targetField] =
+              typeof value === 'string' ? value.trim() : String(value).trim();
+          }
+        }
+        return contact as ImportRow;
+      })
+      .filter((r) => r.email || r.phone);
+  }
+
   /**
    * Traite un batch de contacts avec déduplication email OU téléphone
    * Conformité RG-11 (déduplication auto) + RG-13 (isolation stricte par accountId)
    */
-  async processBatch(accountId: string, batch: any[]) {
+  async processBatch(accountId: string, batch: ImportRow[]) {
     const result = {
       success: 0,
       duplicates: 0,
       errors: 0,
+      invalidPhones: 0,
       details: [] as Array<{
-        row: any;
+        row: ImportRow;
         status?: string;
         error?: string;
         id?: string;
@@ -97,12 +147,38 @@ export class ImportService {
 
       // Détection doublon: email OU téléphone existe déjà dans le compte (RG-11)
       if (
-        existingSet.has(contact.email) ||
+        (contact.email && existingSet.has(contact.email)) ||
         (phoneKey && existingSet.has(phoneKey))
       ) {
+        // Mise à jour des champs enrichis (tags, localisation) si la nouvelle
+        // donnée est non vide — sans écraser les autres champs existants
+        const hasTags = Array.isArray(contact.tags) && contact.tags.length > 0;
+        const hasLocation = Boolean(contact.location);
+        if (hasTags || hasLocation) {
+          try {
+            const where = contact.email
+              ? { accountId_email: { accountId, email: contact.email } }
+              : { accountId_phone: { accountId, phone: phoneKey! } };
+            await this.prisma.contact.update({
+              where,
+              data: {
+                ...(hasTags ? { tags: contact.tags } : {}),
+                ...(hasLocation ? { location: contact.location } : {}),
+              },
+            });
+          } catch {
+            // contact introuvable ou contrainte unique — on ignore
+          }
+        }
         result.duplicates++;
         result.details.push({ row: contact, status: 'duplicate' });
         continue;
+      }
+
+      // Valider le numéro de téléphone et déterminer son statut
+      const phoneValidation = validatePhoneOrNull(phoneKey);
+      if (phoneKey && phoneValidation.status === 'INVALID') {
+        result.invalidPhones++;
       }
 
       // Création du nouveau contact avec isolation stricte (RG-13)
@@ -114,8 +190,10 @@ export class ImportService {
             phone: phoneKey || null,
             firstName: contact.firstName || null,
             lastName: contact.lastName || null,
+            location: contact.location || null,
             tags: contact.tags || [],
             optOut: false,
+            phoneStatus: phoneValidation.status,
           },
         });
 
@@ -123,18 +201,24 @@ export class ImportService {
         // Ajouter aux existants pour détection intra-batch
         if (contact.email) existingSet.add(contact.email);
         if (phoneKey) existingSet.add(phoneKey);
+        this.eventEmitter.emit('contact.added', {
+          accountId,
+          contactId: created.id,
+          contact: created,
+        });
         result.details.push({
           row: contact,
           status: 'created',
           id: created.id,
         });
-      } catch (error: any) {
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
         this.logger.error(
-          `Failed to create contact: ${error.message}`,
-          error.stack,
+          `Failed to create contact: ${err.message}`,
+          err.stack,
         );
         result.errors++;
-        result.details.push({ row: contact, error: error.message });
+        result.details.push({ row: contact, error: err.message });
       }
     }
 
@@ -172,9 +256,19 @@ export class ImportService {
    * Méthode appelée par le worker BullMQ pour traiter l'import complet
    * Découpe en batches de BATCH_SIZE pour respecter RG-08 (<60s pour 50k lignes)
    */
-  async processFullImport(accountId: string, fileName: string, allRows: any[]) {
+  async processFullImport(
+    accountId: string,
+    fileName: string,
+    allRows: ImportRow[],
+    job?: Job,
+  ) {
     const total = allRows.length;
-    const globalResult = { success: 0, duplicates: 0, errors: 0 };
+    const globalResult = {
+      success: 0,
+      duplicates: 0,
+      errors: 0,
+      invalidPhones: 0,
+    };
 
     // Traitement par batches pour performance et mémoire
     for (let i = 0; i < allRows.length; i += this.BATCH_SIZE) {
@@ -184,6 +278,20 @@ export class ImportService {
       globalResult.success += batchResult.success;
       globalResult.duplicates += batchResult.duplicates;
       globalResult.errors += batchResult.errors;
+      globalResult.invalidPhones += batchResult.invalidPhones;
+
+      const current = Math.min(i + this.BATCH_SIZE, total);
+      if (job) {
+        await job.updateProgress({
+          current,
+          total,
+          percentage: Math.round((current / total) * 100),
+          success: globalResult.success,
+          duplicates: globalResult.duplicates,
+          errors: globalResult.errors,
+          invalidPhones: globalResult.invalidPhones,
+        });
+      }
     }
 
     // Générer le rapport final (RG-12)
@@ -203,5 +311,298 @@ export class ImportService {
         errorCount: report.errorCount,
       },
     };
+  }
+
+  /**
+   * Lance un import asynchrone via BullMQ à partir d'un fichier NDJSON déjà uploadé.
+   * Retourne immédiatement un jobId — le traitement se fait en arrière-plan.
+   */
+  async startImportFromFile(
+    accountId: string,
+    fileName: string,
+    filePath: string,
+  ) {
+    const jobId = `import-${accountId}-${Date.now()}`;
+    await importQueue.add(
+      'process-import',
+      { accountId, fileName, filePath },
+      { jobId, attempts: 3, backoff: { type: 'exponential', delay: 2000 } },
+    );
+    this.logger.log(
+      `Import file job queued: ${jobId} for account ${accountId} file: ${filePath}`,
+    );
+    return { success: true, jobId };
+  }
+
+  /**
+   * Traite un fichier NDJSON d'import ligne par ligne en batches
+   * Evite de charger tout le fichier en mémoire pour les gros imports
+   */
+  async processFullImportFromFile(
+    accountId: string,
+    fileName: string,
+    filePath: string,
+    job?: Job,
+  ) {
+    const rl = readline.createInterface({
+      input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+      crlfDelay: Infinity,
+    });
+
+    const globalResult = {
+      success: 0,
+      duplicates: 0,
+      errors: 0,
+      invalidPhones: 0,
+    };
+    const batch: ImportRow[] = [];
+    let processedTotal = 0;
+
+    for await (const line of rl) {
+      if (!line) continue;
+      try {
+        const row = JSON.parse(line) as ImportRow;
+        batch.push(row);
+      } catch {
+        this.logger.warn('Skipping invalid JSON line during import streaming');
+        globalResult.errors++;
+      }
+
+      if (batch.length >= this.BATCH_SIZE) {
+        const r = await this.processBatch(accountId, batch.splice(0));
+        globalResult.success += r.success;
+        globalResult.duplicates += r.duplicates;
+        globalResult.errors += r.errors;
+        globalResult.invalidPhones += r.invalidPhones;
+        processedTotal += this.BATCH_SIZE;
+
+        if (job) {
+          await job.updateProgress({
+            current: processedTotal,
+            total: 0,
+            percentage: -1,
+            success: globalResult.success,
+            duplicates: globalResult.duplicates,
+            errors: globalResult.errors,
+            invalidPhones: globalResult.invalidPhones,
+          });
+        }
+      }
+    }
+
+    if (batch.length > 0) {
+      const r = await this.processBatch(accountId, batch.splice(0));
+      globalResult.success += r.success;
+      globalResult.duplicates += r.duplicates;
+      globalResult.errors += r.errors;
+      globalResult.invalidPhones += r.invalidPhones;
+    }
+
+    // Générer le rapport final
+    const report = await this.generateReport(accountId, fileName, {
+      ...globalResult,
+      total:
+        globalResult.success + globalResult.duplicates + globalResult.errors,
+    });
+
+    // Tentative de cleanup du fichier temporaire
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (e) {
+      // ignore
+    }
+
+    return {
+      jobId: `import-${accountId}-${Date.now()}`,
+      status: 'completed',
+      report: {
+        fileName,
+        totalRecords: report.totalRecords,
+        successCount: report.successCount,
+        duplicateCount: report.duplicateCount,
+        errorCount: report.errorCount,
+      },
+    };
+  }
+
+  async parseExcelFile(file: Express.Multer.File): Promise<{
+    headers: string[];
+    rows: Record<string, unknown>[];
+    preview: Record<string, unknown>[];
+    totalRows: number;
+  }> {
+    const ext = file.originalname.split('.').pop()?.toLowerCase();
+    const LIMIT = 50_000;
+
+    // Support CSV en plus de XLS/XLSX
+    if (ext === 'csv') {
+      return this.parseCsvBuffer(file.buffer, LIMIT);
+    }
+
+    if (!['xls', 'xlsx'].includes(ext ?? '')) {
+      throw new BadRequestException(
+        'Format non supporté. Utilisez CSV, XLS ou XLSX.',
+      );
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    try {
+      const ab = file.buffer.buffer.slice(
+        file.buffer.byteOffset,
+        file.buffer.byteOffset + file.buffer.byteLength,
+      );
+      await workbook.xlsx.load(ab as unknown as ArrayBuffer);
+    } catch {
+      throw new BadRequestException(
+        'Impossible de lire ce fichier Excel. Enregistrez-le au format .xlsx et réessayez.',
+      );
+    }
+
+    const sheet = workbook.worksheets[0];
+    if (!sheet) throw new BadRequestException('Classeur vide');
+
+    const headers: string[] = [];
+    sheet.getRow(1).eachCell((cell) => {
+      headers.push(String(cell.value ?? '').trim());
+    });
+    if (headers.length === 0)
+      throw new BadRequestException('En-têtes introuvables');
+
+    const rows: Record<string, unknown>[] = [];
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1 || rows.length >= LIMIT) return;
+      const obj: Record<string, unknown> = {};
+      headers.forEach((h, idx) => {
+        obj[h] = row.getCell(idx + 1).value ?? '';
+      });
+      rows.push(obj);
+    });
+
+    return { headers, rows, preview: rows.slice(0, 5), totalRows: rows.length };
+  }
+
+  private parseCsvBuffer(
+    buffer: Buffer,
+    limit: number,
+  ): {
+    headers: string[];
+    rows: Record<string, unknown>[];
+    preview: Record<string, unknown>[];
+    totalRows: number;
+  } {
+    const text = buffer.toString('utf-8');
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length === 0) throw new BadRequestException('Fichier CSV vide');
+
+    const parseLine = (line: string): string[] => {
+      const result: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            current += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if ((ch === ',' || ch === ';') && !inQuotes) {
+          result.push(current.trim());
+          current = '';
+        } else {
+          current += ch;
+        }
+      }
+      result.push(current.trim());
+      return result;
+    };
+
+    const headers = parseLine(lines[0]).map((h) =>
+      h.replace(/^"|"$/g, '').trim(),
+    );
+    if (headers.length === 0)
+      throw new BadRequestException('En-têtes CSV introuvables');
+
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 1; i < lines.length && rows.length < limit; i++) {
+      const vals = parseLine(lines[i]);
+      const obj: Record<string, unknown> = {};
+      headers.forEach((h, idx) => {
+        obj[h] = vals[idx]?.replace(/^"|"$/g, '') ?? '';
+      });
+      rows.push(obj);
+    }
+
+    return { headers, rows, preview: rows.slice(0, 5), totalRows: rows.length };
+  }
+
+  async initChunkImport(accountId: string): Promise<string> {
+    const fileId = randomUUID();
+    const dir = path.join(os.tmpdir(), 'novasms-imports', accountId);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, `${fileId}.ndjson`), '');
+    return fileId;
+  }
+
+  async appendChunk(
+    accountId: string,
+    fileId: string,
+    rows: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    const filePath = path.join(
+      os.tmpdir(),
+      'novasms-imports',
+      accountId,
+      `${fileId}.ndjson`,
+    );
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      throw new BadRequestException('fileId introuvable');
+    }
+    const lines = rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    await fs.promises.appendFile(filePath, lines, { encoding: 'utf8' });
+  }
+
+  /**
+   * Fallback: retourne le rapport le plus récent en base pour ce compte.
+   * Utilisé quand BullMQ a déjà purgé le job de Redis avant le poll frontend.
+   */
+  async getLatestReportForAccount(
+    accountId: string,
+    withinMs = 10 * 60 * 1000,
+  ) {
+    const report = await this.prisma.importReport.findFirst({
+      where: { accountId },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!report) return null;
+    if (Date.now() - report.createdAt.getTime() > withinMs) return null;
+    return report;
+  }
+
+  async finalizeChunkImport(
+    accountId: string,
+    fileId: string,
+    fileName: string,
+  ): Promise<{ jobId: string }> {
+    const filePath = path.join(
+      os.tmpdir(),
+      'novasms-imports',
+      accountId,
+      `${fileId}.ndjson`,
+    );
+    try {
+      await fs.promises.access(filePath);
+    } catch {
+      throw new BadRequestException('fileId introuvable');
+    }
+    const result = await this.startImportFromFile(
+      accountId,
+      fileName,
+      filePath,
+    );
+    return { jobId: result.jobId };
   }
 }

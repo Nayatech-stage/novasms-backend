@@ -78,6 +78,12 @@ export const SegmentCreateSchema = z.object({
     .max(maxRules, `Maximum ${maxRules} critères autorisés`)
     .optional()
     .default([]),
+  contactIds: z
+    .array(z.string().uuid('ID de contact invalide'))
+    .min(1, 'Au moins un contact est requis')
+    .max(500, 'Maximum 500 contacts autorisés')
+    .optional()
+    .default([]),
 });
 
 export type Rule = z.infer<typeof RuleSchema>;

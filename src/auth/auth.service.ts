@@ -1,16 +1,21 @@
 import {
   Injectable,
   ConflictException,
+  Logger,
   BadRequestException,
   UnauthorizedException,
+  InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 import * as bcrypt from 'bcryptjs';
 import { RegisterDto } from './dto/register.dto';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID, randomInt } from 'crypto';
 import * as speakeasy from 'speakeasy';
+import { UserRole } from '@prisma/client'; // ✅ Import de l'enum Prisma
 
 const LOGIN_LOCK_THRESHOLD = 5;
 const LOGIN_LOCK_MINUTES = 15;
@@ -29,8 +34,9 @@ type AuthAccount = {
   twoFactorCode: string | null;
   twoFactorCodeExpiry: Date | null;
   twoFactorSecret: string | null;
+  twoFactorEnabled: boolean;
+  twoFactorPhone: string | null;
   backupCodes?: string[];
-  // ✅ NOUVEAUX CHAMPS pour Wizard + RBAC + Multi-tenant
   onboardingCompleted: boolean;
 };
 
@@ -39,7 +45,7 @@ type AuthUser = {
   accountId: string;
   email: string;
   passwordHash: string;
-  role: string;
+  role: UserRole; // ✅ Type enum Prisma
   twoFactorEnabled: boolean;
 };
 
@@ -50,15 +56,38 @@ type AuthTokens = {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private mail: MailService,
     private jwtService: JwtService,
+    private smsProviderFactory: SmsProviderFactory,
   ) {}
 
-  async register(data: RegisterDto) {
+  async register(
+    data:
+      | RegisterDto
+      | {
+          adminEmail?: string;
+          password?: string;
+          companyName?: string;
+          country?: string;
+        },
+  ) {
+    // Normalize incoming payloads: support both French DTO and older API shape
+    const raw = (data ?? {}) as Record<string, string | undefined>;
+    const email = raw.email ?? raw.adminEmail ?? null;
+    const password = raw.motDePasse ?? raw.password ?? null;
+    const nom = raw.nom ?? raw.companyName ?? 'Nouvelle entreprise';
+    const pays = raw.pays ?? raw.country ?? 'CI';
+
+    if (!email || !password) {
+      throw new BadRequestException('Email and password are required');
+    }
+
     const existing = await this.prisma.account.findUnique({
-      where: { adminEmail: data.email },
+      where: { adminEmail: email },
     });
 
     if (existing) {
@@ -67,28 +96,27 @@ export class AuthService {
       );
     }
 
-    const hashedPassword = await bcrypt.hash(data.motDePasse, 12);
-
-    const token = uuidv4();
+    const hashedPassword = await bcrypt.hash(password, 12);
+    const token = randomUUID();
     const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await this.prisma.account.create({
       data: {
-        companyName: data.nom,
-        adminEmail: data.email,
+        companyName: nom,
+        adminEmail: email,
         passwordHash: hashedPassword,
-        country: data.pays,
+        country: pays,
         creditBalance: 0,
         confirmationToken: token,
         tokenExpiry: expiry,
         emailVerified: false,
-        onboardingCompleted: false, // ✅ Valeur par défaut
+        onboardingCompleted: false,
       },
     });
 
     const createdAccount = await this.prisma.account.findUnique({
-      where: { adminEmail: data.email },
-      select: { id: true },
+      where: { adminEmail: email },
+      select: { id: true, adminEmail: true, companyName: true },
     });
 
     if (!createdAccount) {
@@ -98,18 +126,61 @@ export class AuthService {
     await this.prisma.user.create({
       data: {
         accountId: createdAccount.id,
-        email: data.email,
+        email,
         passwordHash: hashedPassword,
-        role: 'admin',
+        role: UserRole.Admin,
         twoFactorEnabled: false,
       },
     });
 
-    await this.mail.sendVerificationEmail(data.email, token);
+    // US-001: audit log pour traçabilité inscription
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          accountId: createdAccount.id,
+          userId: createdAccount.id,
+          action: 'registration_complete',
+          details: { email, companyName: nom },
+        },
+      });
+    } catch {
+      // non-bloquant : l'inscription réussit même si l'audit log échoue
+    }
+
+    // send verification email (best-effort)
+    try {
+      await this.mail.sendVerificationEmail(email, token);
+    } catch (err) {
+      // don't block registration if mail fails in tests
+      this.logger.warn(
+        `Failed to send verification email: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // Build minimal auth account object for token generation
+    const authAccount = {
+      id: createdAccount.id,
+      companyName: createdAccount.companyName || nom,
+      adminEmail: createdAccount.adminEmail || email,
+      passwordHash: hashedPassword,
+      sector: null,
+      primaryChannels: [],
+      emailVerified: false,
+      loginAttempts: 0,
+      lockedUntil: null,
+      twoFactorCode: null,
+      twoFactorCodeExpiry: null,
+      twoFactorSecret: null,
+      onboardingCompleted: false,
+    } as unknown as AuthAccount;
+
+    const tokens = this.generateTokens(authAccount, UserRole.Admin);
 
     return {
       success: true,
-      message: 'Account created. Please check your email to verify.',
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+      account: { id: createdAccount.id },
     };
   }
 
@@ -138,7 +209,7 @@ export class AuthService {
       },
     });
 
-    console.log(`[Auth] Email verified: ${account.adminEmail}`);
+    this.logger.log(`Email verified: ${account.adminEmail}`);
     return {
       success: true,
       message: 'Email verified successfully',
@@ -165,7 +236,7 @@ export class AuthService {
       };
     }
 
-    const token = uuidv4();
+    const token = randomUUID();
     const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await this.prisma.account.update({
@@ -185,12 +256,13 @@ export class AuthService {
   }
 
   async login(email: string, password: string) {
-    const account = await this.prisma.account.findUnique({
-      where: { adminEmail: email },
+    const normalizedEmail = email.trim().toLowerCase();
+    const account = await this.prisma.account.findFirst({
+      where: { adminEmail: { equals: normalizedEmail, mode: 'insensitive' } },
     });
 
     if (!account) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect');
+      return this.loginAsMember(normalizedEmail, password);
     }
 
     if (!account.emailVerified) {
@@ -259,29 +331,60 @@ export class AuthService {
       data: { loginAttempts: 0, lockedUntil: null },
     });
 
-    // 2FA si activé
+    // 2FA TOTP (application Authenticator)
     if (primaryUser.twoFactorEnabled) {
-      const twoFactorCode = this.generateTwoFactorCode();
-      const twoFactorCodeExpiry = new Date(
-        Date.now() + TWO_FACTOR_CODE_TTL_MINUTES * 60 * 1000,
-      );
       const twoFactorToken = this.generateTwoFactorToken(authAccount);
-
       await this.prisma.account.update({
         where: { id: authAccount.id },
-        data: { twoFactorCode, twoFactorCodeExpiry },
+        data: { twoFactorCode: null, twoFactorCodeExpiry: null },
       });
-
-      await this.mail.sendTwoFactorCodeEmail(
-        authAccount.adminEmail,
-        twoFactorCode,
-      );
-
       return {
         success: true,
         requiresTwoFactor: true,
         twoFactorToken,
-        message: 'Un code de vérification a été envoyé à votre adresse email.',
+        message:
+          'Entrez le code de votre application Authenticator ou un code de secours.',
+        account: {
+          id: authAccount.id,
+          email: authAccount.adminEmail,
+          name: authAccount.companyName,
+          role: primaryUser.role,
+          sector: authAccount.sector,
+          primaryChannels: authAccount.primaryChannels,
+          onboardingCompleted: authAccount.onboardingCompleted,
+        },
+      };
+    }
+
+    // 2FA SMS (OTP par SMS)
+    if (authAccount.twoFactorEnabled && authAccount.twoFactorPhone) {
+      const code = randomInt(100000, 1000000).toString();
+      const expiry = new Date(Date.now() + 10 * 60 * 1000);
+      await this.prisma.account.update({
+        where: { id: authAccount.id },
+        data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
+      });
+      try {
+        const smsProvider = this.smsProviderFactory.getProvider();
+        await smsProvider.send(
+          authAccount.twoFactorPhone,
+          `Votre code NovaSMS : ${code}. Valable 10 min.`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `2FA SMS login send failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      const maskedPhone = authAccount.twoFactorPhone.replace(
+        /(\d{2})\d+(\d{2})$/,
+        '$1****$2',
+      );
+      const twoFactorToken = this.generateTwoFactorToken(authAccount);
+      return {
+        success: true,
+        requiresTwoFactor: true,
+        twoFactorToken,
+        message: `Code OTP envoyé par SMS au ${maskedPhone}.`,
         account: {
           id: authAccount.id,
           email: authAccount.adminEmail,
@@ -305,6 +408,47 @@ export class AuthService {
         email: authAccount.adminEmail,
         name: authAccount.companyName,
         role: primaryUser.role,
+        sector: authAccount.sector,
+        primaryChannels: authAccount.primaryChannels,
+        onboardingCompleted: authAccount.onboardingCompleted,
+      },
+    };
+  }
+
+  private async loginAsMember(email: string, password: string) {
+    const memberUser = await this.prisma.user.findUnique({
+      where: { email },
+      include: { account: true },
+    });
+
+    if (!memberUser || !memberUser.passwordHash) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect');
+    }
+
+    const isPasswordValid = await this.verifyPassword(
+      password,
+      memberUser.passwordHash,
+    );
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Email ou mot de passe incorrect');
+    }
+
+    const authAccount = memberUser.account as unknown as AuthAccount;
+    const tokens = this.generateTokens(
+      authAccount,
+      memberUser.role as UserRole,
+      memberUser.email,
+    );
+
+    return {
+      success: true,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      account: {
+        id: authAccount.id,
+        email: memberUser.email,
+        name: authAccount.companyName,
+        role: memberUser.role,
         sector: authAccount.sector,
         primaryChannels: authAccount.primaryChannels,
         onboardingCompleted: authAccount.onboardingCompleted,
@@ -347,9 +491,12 @@ export class AuthService {
 
     const authAccount = account as unknown as AuthAccount;
     const primaryUser = await this.getPrimaryUser(authAccount);
-    const now = new Date();
 
-    if (!primaryUser.twoFactorEnabled) {
+    const totpActive = primaryUser.twoFactorEnabled;
+    const smsActive =
+      authAccount.twoFactorEnabled && !!authAccount.twoFactorPhone;
+
+    if (!totpActive && !smsActive) {
       throw new UnauthorizedException(
         'La double authentification est désactivée',
       );
@@ -361,20 +508,30 @@ export class AuthService {
       : [];
     const matchedBackupCode = backupCodes.find((bc) => bc === normalizedCode);
 
-    if (!matchedBackupCode) {
-      if (!authAccount.twoFactorCode || !authAccount.twoFactorCodeExpiry) {
-        throw new UnauthorizedException('Code de vérification expiré');
-      }
-      if (authAccount.twoFactorCodeExpiry < now) {
-        await this.prisma.account.update({
-          where: { id: authAccount.id },
-          data: { twoFactorCode: null, twoFactorCodeExpiry: null },
-        });
-        throw new UnauthorizedException('Code de vérification expiré');
-      }
-      if (authAccount.twoFactorCode !== normalizedCode) {
-        throw new UnauthorizedException('Code de vérification incorrect');
-      }
+    let isTotpValid = false;
+    if (totpActive && authAccount.twoFactorSecret) {
+      isTotpValid = speakeasy.totp.verify({
+        secret: authAccount.twoFactorSecret,
+        encoding: 'base32',
+        token: normalizedCode,
+        window: 2,
+      });
+    }
+
+    let isSmsValid = false;
+    if (
+      smsActive &&
+      authAccount.twoFactorCode &&
+      authAccount.twoFactorCodeExpiry
+    ) {
+      const now = new Date();
+      isSmsValid =
+        now < authAccount.twoFactorCodeExpiry &&
+        normalizedCode === authAccount.twoFactorCode;
+    }
+
+    if (!isTotpValid && !matchedBackupCode && !isSmsValid) {
+      throw new UnauthorizedException('Code de vérification incorrect');
     }
 
     await this.prisma.account.update({
@@ -403,18 +560,135 @@ export class AuthService {
         role: primaryUser.role,
         sector: authAccount.sector,
         primaryChannels: authAccount.primaryChannels,
-        onboardingCompleted: authAccount.onboardingCompleted, // ✅ Pour redirection frontend
+        onboardingCompleted: authAccount.onboardingCompleted,
       },
     };
   }
 
-  // ✅ NOUVELLE MÉTHODE — Marquer onboarding comme complété
+  async refreshTokens(refreshToken: string) {
+    if (!refreshToken) {
+      throw new BadRequestException('refreshToken requis');
+    }
+
+    let payload: { sub?: string; email?: string };
+    try {
+      payload = this.jwtService.verify<{ sub?: string; email?: string }>(
+        refreshToken,
+        {
+          secret: process.env.JWT_REFRESH_SECRET,
+        },
+      );
+    } catch {
+      throw new UnauthorizedException('Refresh token invalide ou expiré');
+    }
+
+    if (!payload.sub || !payload.email) {
+      throw new UnauthorizedException('Refresh token invalide');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: payload.sub },
+    });
+
+    if (!account || account.adminEmail !== payload.email) {
+      throw new UnauthorizedException('Compte introuvable pour ce token');
+    }
+
+    const authAccount = account as unknown as AuthAccount;
+    const primaryUser = await this.getPrimaryUser(authAccount);
+    const tokens = this.generateTokens(authAccount, primaryUser.role);
+
+    return {
+      success: true,
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
+  }
+
   async markOnboardingCompleted(accountId: string) {
     await this.prisma.account.update({
       where: { id: accountId },
       data: { onboardingCompleted: true },
     });
     return { success: true, message: 'Onboarding marked as completed' };
+  }
+
+  // ✅ Reset password (US-002)
+  async requestPasswordReset(email: string) {
+    if (!email) {
+      throw new BadRequestException('Email requis');
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const account = await this.prisma.account.findFirst({
+      where: { adminEmail: { equals: normalizedEmail, mode: 'insensitive' } },
+      select: { id: true, adminEmail: true },
+    });
+
+    if (!account) {
+      return {
+        success: true,
+        message: 'Si le compte existe, un email sera envoyé.',
+      };
+    }
+
+    const token = randomUUID();
+    const expiry = new Date(Date.now() + 60 * 60 * 1000);
+
+    await this.prisma.account.update({
+      where: { id: account.id },
+      data: { resetPasswordToken: token, resetPasswordExpiry: expiry },
+    });
+
+    try {
+      await this.mail.sendPasswordResetEmail(account.adminEmail, token);
+    } catch (error) {
+      throw new InternalServerErrorException(
+        error instanceof Error
+          ? error.message
+          : "Impossible d'envoyer l'email de réinitialisation.",
+      );
+    }
+
+    return { success: true, message: 'Email de réinitialisation envoyé.' };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    if (!token) {
+      throw new BadRequestException('Token requis');
+    }
+
+    const account = await this.prisma.account.findFirst({
+      where: {
+        resetPasswordToken: token,
+        resetPasswordExpiry: { gte: new Date() },
+      },
+    });
+
+    if (!account) {
+      throw new UnauthorizedException('Token invalide ou expiré');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
+
+    await this.prisma.account.update({
+      where: { id: account.id },
+      data: {
+        passwordHash: hashedPassword,
+        resetPasswordToken: null,
+        resetPasswordExpiry: null,
+        loginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
+
+    await this.prisma.user.updateMany({
+      where: { accountId: account.id },
+      data: { passwordHash: hashedPassword },
+    });
+
+    return { success: true, message: 'Mot de passe réinitialisé avec succès.' };
   }
 
   async updateProfile(
@@ -433,7 +707,8 @@ export class AuthService {
       throw new BadRequestException('Company name required');
     }
 
-    const normalizedRole = this.normalizeRole(profile.role);
+    // ✅ Correction: normaliser le rôle en enum UserRole
+    const normalizedRole = this.normalizeRoleToEnum(profile.role);
 
     const accountSnapshot = await this.prisma.account.findUnique({
       where: { id: accountId },
@@ -450,9 +725,7 @@ export class AuthService {
 
     const account = await this.prisma.account.update({
       where: { id: accountId },
-      data: {
-        companyName,
-      },
+      data: { companyName },
       select: {
         id: true,
         adminEmail: true,
@@ -475,6 +748,8 @@ export class AuthService {
         twoFactorCode: null,
         twoFactorCodeExpiry: null,
         twoFactorSecret: null,
+        twoFactorEnabled: false,
+        twoFactorPhone: null,
         backupCodes: [],
         onboardingCompleted: account.onboardingCompleted,
       },
@@ -500,12 +775,15 @@ export class AuthService {
     return await bcrypt.compare(plainPassword, hash);
   }
 
-  private generateTokens(account: AuthAccount, role: string): AuthTokens {
-    // ✅ Payload enrichi pour multi-tenant + RBAC
+  private generateTokens(
+    account: AuthAccount,
+    role: UserRole,
+    emailOverride?: string,
+  ): AuthTokens {
     const payload = {
       sub: account.id,
-      email: account.adminEmail,
-      accountId: account.id, // 🔑 Isolation données entre entreprises
+      email: emailOverride ?? account.adminEmail,
+      accountId: account.id,
       role,
       onboardingCompleted: account.onboardingCompleted,
     };
@@ -527,10 +805,6 @@ export class AuthService {
     };
   }
 
-  private generateTwoFactorCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
-  }
-
   private generateTwoFactorToken(account: AuthAccount): string {
     return this.jwtService.sign(
       {
@@ -549,12 +823,9 @@ export class AuthService {
   private generateBackupCodes(count = 10): string[] {
     const codes: string[] = [];
     for (let i = 0; i < count; i++) {
-      const code = `${Math.floor(Math.random() * 10000)
-        .toString()
-        .padStart(4, '0')}-${Math.floor(Math.random() * 10000)
-        .toString()
-        .padStart(4, '0')}`;
-      codes.push(code);
+      const a = randomInt(0, 10000).toString().padStart(4, '0');
+      const b = randomInt(0, 10000).toString().padStart(4, '0');
+      codes.push(`${a}-${b}`);
     }
     return codes;
   }
@@ -568,11 +839,8 @@ export class AuthService {
     });
     if (!account) throw new BadRequestException('Account not found');
 
-    /* speakeasy doesn't have strict types in this project environment; disable
-       the specific ESLint type-safety checks for this call only. */
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     const secret = speakeasy.generateSecret({
-      name: `NovaSMS (${account.adminEmail})`,
+      name: `NovaSMS:${account.adminEmail}`,
       issuer: 'NovaSMS',
       length: 32,
     }) as { base32: string; otpauth_url: string };
@@ -606,8 +874,6 @@ export class AuthService {
     const secret = account.twoFactorSecret;
     if (!secret) throw new BadRequestException('2FA secret not set');
 
-    // speakeasy.totp may be untyped in this environment — suppress type-safety ESLint rules here
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
     const ok = speakeasy.totp.verify({
       secret,
       encoding: 'base32',
@@ -671,12 +937,97 @@ export class AuthService {
       where: { id: account.id },
       data: {
         twoFactorSecret: null,
+        twoFactorEnabled: false,
+        twoFactorPhone: null,
         backupCodes: [],
         twoFactorCode: null,
         twoFactorCodeExpiry: null,
       },
     });
     return { success: true, message: '2FA désactivée' };
+  }
+
+  async sendTwoFactorSmsSetup(accountId: string, phone: string) {
+    if (!accountId) throw new BadRequestException('accountId requis');
+    if (!phone || phone.replace(/\D/g, '').length < 8) {
+      throw new BadRequestException('Numéro de téléphone invalide');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+    });
+    if (!account) throw new BadRequestException('Compte introuvable');
+
+    const code = randomInt(100000, 1000000).toString();
+    const expiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
+    });
+
+    try {
+      const smsProvider = this.smsProviderFactory.getProvider();
+      await smsProvider.send(
+        phone,
+        `NovaSMS - Code de vérification : ${code}. Valable 10 min.`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `2FA SMS setup send failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      this.logger.debug(`2FA setup code for ${account.adminEmail}: ${code}`);
+    }
+
+    return { success: true, message: 'Code envoyé par SMS' };
+  }
+
+  async enableTwoFactorSms(accountId: string, phone: string, code: string) {
+    if (!accountId || !phone || !code) {
+      throw new BadRequestException('Paramètres manquants');
+    }
+
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: {
+        id: true,
+        adminEmail: true,
+        twoFactorCode: true,
+        twoFactorCodeExpiry: true,
+      },
+    });
+    if (!account) throw new BadRequestException('Compte introuvable');
+
+    if (!account.twoFactorCode || !account.twoFactorCodeExpiry) {
+      throw new BadRequestException(
+        "Aucun code en attente — envoyez d'abord un code",
+      );
+    }
+    if (new Date() > account.twoFactorCodeExpiry) {
+      throw new BadRequestException('Code expiré — renvoyez un nouveau code');
+    }
+    if (code.trim() !== account.twoFactorCode) {
+      throw new UnauthorizedException('Code incorrect');
+    }
+
+    const backupCodes = this.generateBackupCodes(10);
+
+    await this.prisma.account.update({
+      where: { id: accountId },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorPhone: phone,
+        backupCodes,
+        twoFactorCode: null,
+        twoFactorCodeExpiry: null,
+      },
+    });
+
+    return {
+      success: true,
+      message: '2FA SMS activée',
+      backup_codes: backupCodes,
+    };
   }
 
   async sendTwoFactorSms(accountId: string, _phone?: string) {
@@ -686,7 +1037,7 @@ export class AuthService {
     });
     if (!account) throw new BadRequestException('Account not found');
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomInt(100000, 1000000).toString();
     const expiry = new Date(Date.now() + 10 * 60 * 1000);
 
     await this.prisma.account.update({
@@ -694,14 +1045,36 @@ export class AuthService {
       data: { twoFactorCode: code, twoFactorCodeExpiry: expiry },
     });
 
-    console.log(
-      `[Auth] 2FA SMS code for ${account.adminEmail}: ${code} (phone: ${_phone || 'n/a'})`,
-    );
+    const phone = _phone || null;
+    if (phone) {
+      try {
+        const smsProvider = this.smsProviderFactory.getProvider();
+        const result = await smsProvider.send(
+          phone,
+          `Votre code NovaSMS : ${code}. Valable 10 min.`,
+        );
+        if (!result.success) {
+          throw new Error(result.error || 'SMS provider error');
+        }
+      } catch (err) {
+        // Fail-safe : on logue l'erreur mais on ne bloque pas (évite lock-out)
+        this.logger.error(
+          `2FA SMS send failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        this.logger.debug(
+          `2FA fallback — code for ${account.adminEmail}: ${code}`,
+        );
+      }
+    } else {
+      // Aucun numéro connu — mode développement
+      this.logger.debug(
+        `2FA dev mode — code for ${account.adminEmail}: ${code}`,
+      );
+    }
 
-    return { success: true, message: 'Code 2FA envoyé (placeholder)' };
+    return { success: true, message: 'Code 2FA envoyé' };
   }
 
-  // New helper: get account info for frontend
   async getAccount(accountId: string) {
     if (!accountId) throw new BadRequestException('accountId required');
     const account = await this.prisma.account.findUnique({
@@ -713,6 +1086,8 @@ export class AuthService {
         creditBalance: true,
         backupCodes: true,
         twoFactorSecret: true,
+        twoFactorEnabled: true,
+        twoFactorPhone: true,
         onboardingCompleted: true,
         passwordHash: true,
       },
@@ -732,9 +1107,15 @@ export class AuthService {
       twoFactorCode: null,
       twoFactorCodeExpiry: null,
       twoFactorSecret: account.twoFactorSecret,
+      twoFactorEnabled: account.twoFactorEnabled,
+      twoFactorPhone: account.twoFactorPhone,
       backupCodes: account.backupCodes,
       onboardingCompleted: account.onboardingCompleted,
     });
+
+    const maskedPhone = account.twoFactorPhone
+      ? account.twoFactorPhone.replace(/(\d{2})\d+(\d{2})$/, '$1****$2')
+      : null;
 
     return {
       success: true,
@@ -743,14 +1124,17 @@ export class AuthService {
         sector: null,
         primaryChannels: [],
         role: user.role,
-        twoFactorEnabled: user.twoFactorEnabled,
+        totpEnabled: user.twoFactorEnabled,
+        smsEnabled: account.twoFactorEnabled,
+        twoFactorEnabled: user.twoFactorEnabled || account.twoFactorEnabled,
+        twoFactorPhone: maskedPhone,
       },
     };
   }
 
   private async getPrimaryUser(
     account: AuthAccount & { passwordHash?: string },
-    desiredRole?: string,
+    desiredRole?: UserRole, // ✅ Type enum
   ): Promise<AuthUser> {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: account.adminEmail },
@@ -761,7 +1145,12 @@ export class AuthService {
         throw new BadRequestException('Primary user does not match account');
       }
 
-      if (desiredRole && existingUser.role !== desiredRole) {
+      // Un Admin ne peut jamais être rétrogradé via le wizard de profil
+      const canChangeRole =
+        desiredRole &&
+        existingUser.role !== desiredRole &&
+        existingUser.role !== UserRole.Admin;
+      if (canChangeRole) {
         return this.prisma.user.update({
           where: { email: account.adminEmail },
           data: { role: desiredRole },
@@ -775,44 +1164,87 @@ export class AuthService {
       throw new BadRequestException('Primary user not found');
     }
 
+    // ✅ Correction: utiliser UserRole.Admin par défaut
     return this.prisma.user.create({
       data: {
         accountId: account.id,
         email: account.adminEmail,
         passwordHash: account.passwordHash,
-        role: desiredRole || 'admin',
+        role: desiredRole || UserRole.Admin, // ✅ Enum Prisma
         twoFactorEnabled: false,
       },
     });
   }
 
-  private normalizeRole(role?: string): string | undefined {
-    if (!role) {
-      return undefined;
+  // ✅ Nouvelle méthode: normaliser string → UserRole enum
+  async getInvitationInfo(token: string) {
+    if (!token) throw new BadRequestException('Token manquant');
+    const inv = await this.prisma.invitation.findFirst({
+      where: { token, status: 'Sent', expiresAt: { gt: new Date() } },
+      include: { account: { select: { companyName: true } } },
+    });
+    if (!inv) throw new NotFoundException('Invitation invalide ou expirée');
+    return {
+      email: inv.email,
+      role: inv.role,
+      companyName: inv.account.companyName,
+    };
+  }
+
+  async acceptInvitation(token: string, password: string) {
+    if (!token || !password || password.length < 8) {
+      throw new BadRequestException(
+        'Token et mot de passe (8 car. min) requis',
+      );
     }
+    const inv = await this.prisma.invitation.findFirst({
+      where: { token, status: 'Sent', expiresAt: { gt: new Date() } },
+    });
+    if (!inv) throw new NotFoundException('Invitation invalide ou expirée');
+
+    const existing = await this.prisma.user.findFirst({
+      where: { email: inv.email, accountId: inv.accountId },
+    });
+    if (existing)
+      throw new BadRequestException('Cet email est déjà membre du compte');
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    await this.prisma.$transaction([
+      this.prisma.user.create({
+        data: {
+          email: inv.email,
+          accountId: inv.accountId,
+          role: inv.role,
+          passwordHash,
+        },
+      }),
+      this.prisma.invitation.update({
+        where: { id: inv.id },
+        data: { status: 'Accepted' },
+      }),
+    ]);
+
+    return { success: true };
+  }
+
+  private normalizeRoleToEnum(role?: string): UserRole | undefined {
+    if (!role) return undefined;
 
     const value = role.trim().toLowerCase();
+    if (!value) return undefined;
 
-    if (!value) {
-      return undefined;
-    }
-
-    if (value.includes('administr')) {
-      return 'admin';
-    }
-
-    if (value.includes('marketing')) {
-      return 'marketing_manager';
-    }
-
+    if (value.includes('administr')) return UserRole.Admin;
+    if (value.includes('marketing')) return UserRole.Editor; // ou créer UserRole.MarketingManager
     if (
       value.includes('boutique') ||
       value.includes('gérant') ||
       value.includes('gerant')
     ) {
-      return 'store_manager';
+      return UserRole.Editor;
     }
 
-    return value.slice(0, 20);
+    // Fallback: retourner Admin si la valeur n'est pas reconnue
+    return UserRole.Admin;
   }
 }

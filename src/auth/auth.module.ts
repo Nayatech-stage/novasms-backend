@@ -7,6 +7,8 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { MailModule } from '../mail/mail.module';
 import { JwtAuthModule } from './jwt-auth.module';
 import { JwtStrategy } from './jwt.strategy';
+import { JwtBlacklistService } from './jwt-blacklist.service';
+import { SmsProviderFactory } from '../providers/sms/sms.provider.factory';
 
 @Module({
   imports: [
@@ -23,9 +25,14 @@ import { JwtStrategy } from './jwt.strategy';
       },
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    JwtBlacklistService,
+    SmsProviderFactory,
+  ],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, JwtBlacklistService],
 })
 export class AuthModule {
   private readonly __moduleBrand = true;

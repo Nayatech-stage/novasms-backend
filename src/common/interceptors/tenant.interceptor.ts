@@ -26,12 +26,15 @@ export class TenantInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest<TenantRequest>();
 
+    // Si accountId déjà posé (ex: par ApiKeyGuard), ne pas l'écraser
+    if (request.accountId) {
+      return next.handle();
+    }
+
     // Extraire accountId depuis le JWT (injecté par JwtStrategy)
     const accountId = request?.user?.accountId || request?.user?.sub;
 
     if (!accountId) {
-      // Optionnel : décommenter pour rejeter en prod si accountId manquant
-      // throw new BadRequestException('accountId manquant dans le token JWT');
       return next.handle();
     }
 
