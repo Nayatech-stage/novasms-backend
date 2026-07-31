@@ -55,7 +55,10 @@ export class MailService {
       </div>
     `;
 
-    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const testRecipient =
+      process.env.NODE_ENV !== 'production'
+        ? process.env.RESEND_TEST_RECIPIENT
+        : undefined;
     const toRecipients = testRecipient ? [testRecipient] : [email];
 
     if (testRecipient && ![email].includes(testRecipient)) {
@@ -113,7 +116,10 @@ export class MailService {
 
     const from = process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
 
-    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const testRecipient =
+      process.env.NODE_ENV !== 'production'
+        ? process.env.RESEND_TEST_RECIPIENT
+        : undefined;
     const toRecipients = testRecipient ? [testRecipient] : [email];
     if (testRecipient && ![email].includes(testRecipient)) {
       this.logger.warn(
@@ -181,7 +187,10 @@ export class MailService {
       </div>
     `;
 
-    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const testRecipient =
+      process.env.NODE_ENV !== 'production'
+        ? process.env.RESEND_TEST_RECIPIENT
+        : undefined;
     const toRecipients = testRecipient ? [testRecipient] : [email];
     if (testRecipient && ![email].includes(testRecipient)) {
       this.logger.warn(
@@ -379,7 +388,10 @@ export class MailService {
     `;
 
     // En mode test, rediriger vers RESEND_TEST_RECIPIENT (comme les autres emails)
-    const testRecipient = process.env.RESEND_TEST_RECIPIENT;
+    const testRecipient =
+      process.env.NODE_ENV !== 'production'
+        ? process.env.RESEND_TEST_RECIPIENT
+        : undefined;
     const toRecipients = testRecipient ? [testRecipient] : [email];
     if (testRecipient && testRecipient !== email) {
       this.logger.warn(

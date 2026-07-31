@@ -433,6 +433,16 @@ export class AuthService {
       throw new UnauthorizedException('Email ou mot de passe incorrect');
     }
 
+    // Vérifier que le compte propriétaire a bien validé son email
+    if (
+      memberUser.account &&
+      !(memberUser.account as { emailVerified?: boolean }).emailVerified
+    ) {
+      throw new UnauthorizedException(
+        'Veuillez valider votre email avant de vous connecter.',
+      );
+    }
+
     const authAccount = memberUser.account as unknown as AuthAccount;
     const tokens = this.generateTokens(
       authAccount,
