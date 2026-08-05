@@ -1,8 +1,13 @@
-name: Deploy Backend CapRover
+name: Deploy CapRover
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-nova-sms-backend
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -10,9 +15,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to CapRover
-        uses: caprover/deploy-from-github@v1.1.2
+      - uses: actions/setup-node@v4
         with:
-          server: '${{ secrets.CAPROVER_URL }}'
-          app: '${{ secrets.CAPROVER_BACKEND_APP_NAME }}'
-          token: '${{ secrets.CAPROVER_BACKEND_APP_TOKEN }}'
+          node-version: '20'
+
+      - name: Pack source
+        run: |
+          COPYFILE_DISABLE=1 tar \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./dist' \
+            --exclude='./coverage' \
+            --exclude='./uploads' \
+            --exclude='./dev.db' \
+            --exclude='./caprover.env' \
+            --exclude='./.github' \
+            -cf ./deploy.tar .
+
+      # caprover/deploy-from-github@v1.1.2 casse (ERR_REQUIRE_ESM sur update-notifier)
+      - name: Install CapRover CLI
+        run: npm i -g caprover@2.3.1
+
+      - name: Deploy to CapRover
+        run: |
+          caprover deploy \
+            -u "${{ secrets.CAPROVER_SERVER }}" \
+            -a nova-sms-backend \
+            -t ./deploy.tar \
+            --appToken "${{ secrets.CAPROVER_APP_TOKEN }}"

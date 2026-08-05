@@ -99,6 +99,9 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(password, 12);
     const token = randomUUID();
     const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const skipEmailVerification =
+      (process.env.SKIP_EMAIL_VERIFICATION || '').toLowerCase().trim() ===
+      'true';
 
     await this.prisma.account.create({
       data: {
@@ -107,9 +110,9 @@ export class AuthService {
         passwordHash: hashedPassword,
         country: pays,
         creditBalance: 0,
-        confirmationToken: token,
-        tokenExpiry: expiry,
-        emailVerified: false,
+        confirmationToken: skipEmailVerification ? null : token,
+        tokenExpiry: skipEmailVerification ? null : expiry,
+        emailVerified: skipEmailVerification,
         onboardingCompleted: false,
       },
     });
@@ -148,13 +151,15 @@ export class AuthService {
     }
 
     // send verification email (best-effort)
-    try {
-      await this.mail.sendVerificationEmail(email, token);
-    } catch (err) {
-      // don't block registration if mail fails in tests
-      this.logger.warn(
-        `Failed to send verification email: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    if (!skipEmailVerification) {
+      try {
+        await this.mail.sendVerificationEmail(email, token);
+      } catch (err) {
+        // don't block registration if mail fails in tests
+        this.logger.warn(
+          `Failed to send verification email: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     // Build minimal auth account object for token generation
@@ -165,7 +170,7 @@ export class AuthService {
       passwordHash: hashedPassword,
       sector: null,
       primaryChannels: [],
-      emailVerified: false,
+      emailVerified: skipEmailVerification,
       loginAttempts: 0,
       lockedUntil: null,
       twoFactorCode: null,
@@ -265,7 +270,11 @@ export class AuthService {
       return this.loginAsMember(normalizedEmail, password);
     }
 
-    if (!account.emailVerified) {
+    if (
+      !account.emailVerified &&
+      (process.env.SKIP_EMAIL_VERIFICATION || '').toLowerCase().trim() !==
+        'true'
+    ) {
       throw new UnauthorizedException(
         'Veuillez valider votre email avant de vous connecter.',
       );
@@ -436,7 +445,9 @@ export class AuthService {
     // Vérifier que le compte propriétaire a bien validé son email
     if (
       memberUser.account &&
-      !(memberUser.account as { emailVerified?: boolean }).emailVerified
+      !(memberUser.account as { emailVerified?: boolean }).emailVerified &&
+      (process.env.SKIP_EMAIL_VERIFICATION || '').toLowerCase().trim() !==
+        'true'
     ) {
       throw new UnauthorizedException(
         'Veuillez valider votre email avant de vous connecter.',
