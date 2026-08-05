@@ -23,7 +23,7 @@ export type ImportRow = {
 @Injectable()
 export class ImportService {
   private readonly logger = new Logger(ImportService.name);
-  private readonly BATCH_SIZE = 500; // RG-08: performance — traitement par lots
+  private readonly BATCH_SIZE = 1000; // RG-08: performance — 1000 lignes/batch pour < 60s sur 50k
 
   constructor(
     private prisma: PrismaService,
