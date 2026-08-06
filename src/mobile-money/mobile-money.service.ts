@@ -629,71 +629,149 @@ export class MobileMoneyService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
+      const statusMeta: Record<
+        string,
+        { color: string; bg: string; label: string }
+      > = {
+        completed: { color: '#065f46', bg: '#d1fae5', label: 'Validé' },
+        pending: { color: '#92400e', bg: '#fef3c7', label: 'En attente' },
+        failed: { color: '#991b1b', bg: '#fee2e2', label: 'Échoué' },
+        cancelled: { color: '#374151', bg: '#f3f4f6', label: 'Annulé' },
+      };
+      const status = statusMeta[transaction.status] ?? {
+        color: '#374151',
+        bg: '#f3f4f6',
+        label: transaction.status,
+      };
+
+      const operatorLabels: Record<string, string> = {
+        WAVE: 'Wave',
+        ORANGE: 'Orange Money',
+        MOMO: 'MTN Mobile Money',
+        MOOV: 'Moov Money',
+      };
+      const operatorName =
+        operatorLabels[transaction.operator] ?? transaction.operator;
+      const amountStr = `${Number(transaction.amount).toLocaleString('fr-FR')} ${transaction.currency}`;
+      const dateStr = transaction.createdAt.toLocaleString('fr-FR', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+        timeZone: 'UTC',
+      });
+
+      // ── En-tête ──────────────────────────────────────────────────────────
+      doc
+        .fontSize(28)
+        .fillColor('#0c5460')
+        .font('Helvetica-Bold')
+        .text('NovaSMS', 50, 50);
+      doc
+        .fontSize(10)
+        .fillColor('#6b7280')
+        .font('Helvetica')
+        .text('Plateforme de messagerie multi-canal', 50, 85);
+
+      doc
+        .moveTo(50, 110)
+        .lineTo(545, 110)
+        .strokeColor('#e5e7eb')
+        .lineWidth(1)
+        .stroke();
+
       doc
         .fontSize(20)
+        .fillColor('#1a1a1a')
         .font('Helvetica-Bold')
-        .text('NovaSMS — Reçu de paiement', { align: 'center' });
-      doc.moveDown();
-      doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-      doc.moveDown(0.5);
+        .text('Reçu de paiement', 50, 130);
 
-      const statusColor: Record<string, string> = {
-        completed: '#16a34a',
-        pending: '#d97706',
-        failed: '#dc2626',
-        cancelled: '#6b7280',
-      };
-      const color = statusColor[transaction.status] || '#6b7280';
+      // Badge statut
+      doc.roundedRect(400, 128, 100, 22, 11).fillColor(status.bg).fill();
       doc
-        .fontSize(14)
+        .fontSize(10)
+        .fillColor(status.color)
         .font('Helvetica-Bold')
-        .fillColor(color)
-        .text(`Statut : ${transaction.status.toUpperCase()}`, {
-          align: 'center',
-        });
-      doc.fillColor('#000000').moveDown();
+        .text(`✓ ${status.label}`, 410, 133);
 
-      const fields: [string, string][] = [
-        ['ID Transaction', transaction.id],
-        ['Opérateur', transaction.operator],
+      // ── Bloc opérateur ───────────────────────────────────────────────────
+      doc.roundedRect(50, 170, 495, 130, 8).fillColor('#f7f9f7').fill();
+
+      const metaRows: [string, string][] = [
+        ['Opérateur', operatorName],
         ['Numéro de téléphone', transaction.phoneNumber],
-        ['Montant', `${transaction.amount.toString()} ${transaction.currency}`],
         [
-          'Date de création',
-          transaction.createdAt.toLocaleString('fr-FR', { timeZone: 'UTC' }),
+          'Référence',
+          transaction.externalTransactionId ||
+            transaction.id.slice(0, 16).toUpperCase(),
         ],
-        [
-          'Date de complétion',
-          transaction.completedAt
-            ? transaction.completedAt.toLocaleString('fr-FR', {
-                timeZone: 'UTC',
-              })
-            : 'N/A',
-        ],
-        ['Référence externe', transaction.externalTransactionId || 'N/A'],
+        ['Date', dateStr],
         ['ID Compte', transaction.accountId],
       ];
 
-      fields.forEach(([label, value]) => {
+      metaRows.forEach(([label, value], i) => {
+        const y = 185 + i * 22;
         doc
+          .fontSize(10)
+          .fillColor('#6b7280')
+          .font('Helvetica')
+          .text(label, 70, y);
+        doc
+          .fontSize(10)
+          .fillColor('#1a1a1a')
           .font('Helvetica-Bold')
-          .fontSize(11)
-          .text(`${label} :`, { continued: true });
-        doc.font('Helvetica').fontSize(11).text(`  ${value}`);
-        doc.moveDown(0.3);
+          .text(value, 230, y);
       });
 
-      doc.moveDown();
-      doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-      doc.moveDown(0.5);
+      // ── Montant ──────────────────────────────────────────────────────────
+      doc
+        .fontSize(36)
+        .fillColor('#0c5460')
+        .font('Helvetica-Bold')
+        .text(amountStr, 50, 325, {
+          align: 'center',
+        });
+
+      // ── Message de confirmation ───────────────────────────────────────────
+      const confirmMsg =
+        transaction.status === 'completed'
+          ? 'Ce paiement a été validé et vos crédits ont été ajoutés instantanément à votre compte NovaSMS.'
+          : transaction.status === 'pending'
+            ? 'Ce paiement est en cours de traitement. Les crédits seront ajoutés dès validation.'
+            : "Ce paiement n'a pas pu être finalisé. Contactez le support si nécessaire.";
+
+      doc
+        .fontSize(11)
+        .fillColor('#374151')
+        .font('Helvetica')
+        .text(confirmMsg, 50, 385, {
+          align: 'center',
+          width: 495,
+        });
+
+      // ── Pied de page ─────────────────────────────────────────────────────
+      doc
+        .moveTo(50, 430)
+        .lineTo(545, 430)
+        .strokeColor('#e5e7eb')
+        .lineWidth(1)
+        .stroke();
       doc
         .fontSize(9)
+        .fillColor('#9ca3af')
         .font('Helvetica')
-        .fillColor('#6b7280')
         .text(
-          `Document généré le ${new Date().toLocaleString('fr-FR', { timeZone: 'UTC' })} — NovaSMS`,
-          { align: 'center' },
-        );
+          'Ce reçu est généré automatiquement par NovaSMS et constitue votre justificatif de paiement.',
+          50,
+          442,
+          { align: 'center', width: 495 },
+        )
+        .text('Support : support@novasms.ci', 50, 457, {
+          align: 'center',
+          width: 495,
+        })
+        .text("NovaSMS SAS · Abidjan, Côte d'Ivoire", 50, 472, {
+          align: 'center',
+          width: 495,
+        });
 
       doc.end();
     });
