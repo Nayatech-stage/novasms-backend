@@ -54,6 +54,7 @@ type ContactUpdateBody = {
   firstName?: string;
   lastName?: string;
   location?: string;
+  birthday?: string | null;
   tags?: string[];
   optOut?: boolean;
 };
