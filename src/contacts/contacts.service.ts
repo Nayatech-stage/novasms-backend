@@ -259,10 +259,12 @@ export class ContactsService {
       tags?: Prisma.InputJsonValue;
     },
   ): Promise<Contact> {
+    // Étape 1 : création avec gestion P2002 uniquement
+    let c: Contact;
     try {
       const phoneStr = typeof data.phone === 'string' ? data.phone : null;
       const phoneValidation = validatePhoneOrNull(phoneStr);
-      const c = await this.prisma.contact.create({
+      c = await this.prisma.contact.create({
         data: {
           accountId,
           ...data,
@@ -271,23 +273,9 @@ export class ContactsService {
           phoneStatus: phoneValidation.status,
         },
       });
-      this.segmentRecalculationService
-        .addRecalculateAccountSegmentsJob(accountId)
-        .catch(() => {});
-      await this.invalidateContactCountCache(accountId);
-      this.eventEmitter.emit('contact.added', {
-        accountId,
-        contactId: c.id,
-        contact: c,
-      });
-      await this.emitSegmentJoinedEvents(accountId, c);
-      return c;
     } catch (err: unknown) {
-      // Handle unique constraint violations: return existing contact instead of error
-      // Prisma unique constraint code is P2002
       const maybe = err as { code?: string };
-      if (maybe && maybe.code === 'P2002') {
-        // Try to find existing contact by email or phone
+      if (maybe?.code === 'P2002') {
         if (data.email) {
           const existing = await this.prisma.contact.findFirst({
             where: { accountId, email: data.email },
@@ -303,6 +291,25 @@ export class ContactsService {
       }
       throw err;
     }
+
+    // Étape 2 : effets de bord post-création (fire-and-forget — ne doivent jamais
+    // faire échouer la création d'un contact déjà enregistré en base)
+    this.segmentRecalculationService
+      .addRecalculateAccountSegmentsJob(accountId)
+      .catch(() => {});
+    void this.invalidateContactCountCache(accountId);
+    this.eventEmitter.emit('contact.added', {
+      accountId,
+      contactId: c.id,
+      contact: c,
+    });
+    void this.emitSegmentJoinedEvents(accountId, c).catch((err) =>
+      this.logger.warn(
+        `emitSegmentJoinedEvents échoué pour ${c.id}: ${String(err)}`,
+      ),
+    );
+
+    return c;
   }
 
   async remove(accountId: string, id: string): Promise<{ success: true }> {
