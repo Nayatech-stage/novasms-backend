@@ -290,11 +290,21 @@ export class MailService {
 
     const fromNotif =
       process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
+    const testRecipientNotif =
+      process.env.NODE_ENV !== 'production'
+        ? process.env.RESEND_TEST_RECIPIENT
+        : undefined;
+    const toNotif = testRecipientNotif ? [testRecipientNotif] : [email];
+    if (testRecipientNotif && testRecipientNotif !== email) {
+      this.logger.warn(
+        `TEST MODE: redirection campaign notification pour ${email} → ${testRecipientNotif}`,
+      );
+    }
     if (this.resend) {
       try {
         const result = await this.resend.emails.send({
           from: fromNotif,
-          to: email,
+          to: toNotif,
           subject,
           html: htmlContent,
         });
@@ -304,7 +314,7 @@ export class MailService {
           );
         } else {
           this.logger.log(
-            `Campaign sent notification email envoye a ${email} (Resend)`,
+            `Campaign sent notification email envoye a ${toNotif.join(', ')} (Resend)`,
           );
         }
       } catch (error: unknown) {
@@ -360,11 +370,21 @@ export class MailService {
 
     const fromConfirm =
       process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
+    const testRecipientConfirm =
+      process.env.NODE_ENV !== 'production'
+        ? process.env.RESEND_TEST_RECIPIENT
+        : undefined;
+    const toConfirm = testRecipientConfirm ? [testRecipientConfirm] : [email];
+    if (testRecipientConfirm && testRecipientConfirm !== email) {
+      this.logger.warn(
+        `TEST MODE: redirection campaign confirmation pour ${email} → ${testRecipientConfirm}`,
+      );
+    }
     if (this.resend) {
       try {
         const result = await this.resend.emails.send({
           from: fromConfirm,
-          to: email,
+          to: toConfirm,
           subject,
           html: htmlContent,
         });
@@ -374,7 +394,7 @@ export class MailService {
           );
         } else {
           this.logger.log(
-            `Campaign confirmation email envoyé à ${email} (Resend)`,
+            `Campaign confirmation email envoyé à ${toConfirm.join(', ')} (Resend)`,
           );
         }
       } catch (error: unknown) {

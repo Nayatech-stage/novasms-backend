@@ -264,10 +264,16 @@ export class ContactsService {
     try {
       const phoneStr = typeof data.phone === 'string' ? data.phone : null;
       const phoneValidation = validatePhoneOrNull(phoneStr);
+      // Convert birthday string "YYYY-MM-DD" → Date (noon UTC to avoid timezone day-shift)
+      const birthdayDate =
+        typeof data.birthday === 'string' && data.birthday
+          ? new Date(`${data.birthday}T12:00:00.000Z`)
+          : (data.birthday as Date | null | undefined);
       c = await this.prisma.contact.create({
         data: {
           accountId,
           ...data,
+          birthday: birthdayDate,
           tags: data.tags || [],
           optOut: data.optOut || false,
           phoneStatus: phoneValidation.status,
@@ -357,7 +363,12 @@ export class ContactsService {
     if (data.location !== undefined) payload.location = data.location;
     if (data.tags !== undefined) payload.tags = data.tags;
     if (data.optOut !== undefined) payload.optOut = data.optOut;
-    if (data.birthday !== undefined) payload.birthday = data.birthday;
+    if (data.birthday !== undefined) {
+      payload.birthday =
+        typeof data.birthday === 'string' && data.birthday
+          ? new Date(`${data.birthday}T12:00:00.000Z`)
+          : (data.birthday as Date | null);
+    }
 
     const updated = await this.prisma.contact.update({
       where: { id },

@@ -49,7 +49,26 @@ function shouldRewriteCampaignImageSource(src: string): boolean {
     return true;
   }
 
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(src);
+  try {
+    const url = new URL(src);
+    const hostname = url.hostname;
+    // localhost / loopback
+    if (/^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i.test(hostname))
+      return true;
+    // private IP ranges (10.x, 172.16-31.x, 192.168.x)
+    if (
+      /^10\.\d+\.\d+\.\d+$/.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$/.test(hostname) ||
+      /^192\.168\.\d+\.\d+$/.test(hostname)
+    )
+      return true;
+    // Docker internal service names (single-word hostname, no dots — ex: minio, redis)
+    if (!hostname.includes('.')) return true;
+  } catch {
+    // src is not a valid URL — don't rewrite
+  }
+
+  return false;
 }
 
 function rewriteCampaignImageSource(src: string): string {
