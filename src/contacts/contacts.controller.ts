@@ -375,6 +375,21 @@ export class ContactsController {
     return this.contactsService.bulkRemove(accountId, body.ids);
   }
 
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
+  @Delete('bulk/all')
+  @ApiOperation({
+    summary: 'Supprimer tous les contacts (avec filtres optionnels)',
+  })
+  async bulkRemoveAll(
+    @Body()
+    body: { search?: string; tag?: string; location?: string } | undefined,
+    @Request() req: TenantRequest,
+  ) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    return this.contactsService.bulkRemoveAll(accountId, body ?? {});
+  }
+
   @Get('validate-phone')
   @ApiOperation({ summary: 'Valider un numéro de téléphone' })
   validatePhone(@Query('phone') phone: string) {

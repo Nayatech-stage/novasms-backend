@@ -10,13 +10,7 @@ import IORedis from 'ioredis';
 import { buildRedisOptions } from '../common/redis.config';
 
 export interface SegmentFilter {
-  field:
-    | 'tags'
-    | 'country'
-    | 'createdAt'
-    | 'lastPurchase'
-    | 'openRate'
-    | 'city';
+  field: 'tags' | 'location' | 'email' | 'firstName' | 'lastName' | 'createdAt';
   op: 'contains' | 'eq' | 'neq' | 'gte' | 'lte' | 'in';
   value: string | string[];
 }
@@ -63,36 +57,32 @@ export class SegmentsService implements OnModuleDestroy {
         switch (filter.field) {
           case 'tags':
             return { tags: { array_contains: [filter.value as string] } };
-          case 'country':
-            return {
-              country:
-                filter.op === 'neq'
-                  ? { not: filter.value }
-                  : { equals: filter.value },
-            };
-          case 'city':
-            return {
-              city:
-                filter.op === 'neq'
-                  ? { not: filter.value }
-                  : { equals: filter.value },
-            };
+          case 'location':
+          case 'email':
+          case 'firstName':
+          case 'lastName': {
+            const val = filter.value as string;
+            if (filter.op === 'contains')
+              return {
+                [filter.field]: { contains: val, mode: 'insensitive' },
+              };
+            if (filter.op === 'neq') return { [filter.field]: { not: val } };
+            if (filter.op === 'in') {
+              const arr = Array.isArray(filter.value)
+                ? filter.value
+                : String(filter.value)
+                    .split(',')
+                    .map((v) => v.trim());
+              return { [filter.field]: { in: arr } };
+            }
+            return { [filter.field]: { equals: val, mode: 'insensitive' } };
+          }
           case 'createdAt': {
             const dateVal = new Date(filter.value as string);
             if (filter.op === 'gte') return { createdAt: { gte: dateVal } };
             if (filter.op === 'lte') return { createdAt: { lte: dateVal } };
             return {};
           }
-          case 'lastPurchase': {
-            const dateVal = new Date(filter.value as string);
-            if (filter.op === 'gte')
-              return { lastPurchaseAt: { gte: dateVal } };
-            if (filter.op === 'lte')
-              return { lastPurchaseAt: { lte: dateVal } };
-            return {};
-          }
-          case 'openRate':
-            return {}; // calculated field — skip in DB filter
           default:
             return {};
         }

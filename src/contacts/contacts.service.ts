@@ -342,6 +342,30 @@ export class ContactsService {
     return { success: true, deleted: count };
   }
 
+  async bulkRemoveAll(
+    accountId: string,
+    filters: { search?: string; tag?: string; location?: string },
+  ): Promise<{ success: true; deleted: number }> {
+    const where: Prisma.ContactWhereInput = { accountId };
+    if (filters.search) {
+      where.OR = [
+        { firstName: { contains: filters.search, mode: 'insensitive' } },
+        { lastName: { contains: filters.search, mode: 'insensitive' } },
+        { email: { contains: filters.search, mode: 'insensitive' } },
+        { phone: { contains: filters.search } },
+      ];
+    }
+    if (filters.tag) where.tags = { array_contains: [filters.tag] };
+    if (filters.location)
+      where.location = { contains: filters.location, mode: 'insensitive' };
+    const { count } = await this.prisma.contact.deleteMany({ where });
+    this.segmentRecalculationService
+      .addRecalculateAccountSegmentsJob(accountId)
+      .catch(() => {});
+    await this.invalidateContactCountCache(accountId);
+    return { success: true, deleted: count };
+  }
+
   async update(
     accountId: string,
     id: string,
