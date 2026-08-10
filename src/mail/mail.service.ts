@@ -292,15 +292,21 @@ export class MailService {
       process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
     if (this.resend) {
       try {
-        await this.resend.emails.send({
+        const result = await this.resend.emails.send({
           from: fromNotif,
           to: email,
           subject,
           html: htmlContent,
         });
-        this.logger.log(
-          `Campaign sent notification email envoye a ${email} (Resend)`,
-        );
+        if (result.error) {
+          this.logger.error(
+            `Erreur Resend campaign notification: ${result.error.message}`,
+          );
+        } else {
+          this.logger.log(
+            `Campaign sent notification email envoye a ${email} (Resend)`,
+          );
+        }
       } catch (error: unknown) {
         this.logger.error(
           `Erreur Resend campaign notification: ${(error as Error).message}`,
@@ -356,15 +362,21 @@ export class MailService {
       process.env.RESEND_FROM || 'NovaSMS <onboarding@resend.dev>';
     if (this.resend) {
       try {
-        await this.resend.emails.send({
+        const result = await this.resend.emails.send({
           from: fromConfirm,
           to: email,
           subject,
           html: htmlContent,
         });
-        this.logger.log(
-          `Campaign confirmation email envoyé à ${email} (Resend)`,
-        );
+        if (result.error) {
+          this.logger.error(
+            `Erreur Resend confirmation: ${result.error.message}`,
+          );
+        } else {
+          this.logger.log(
+            `Campaign confirmation email envoyé à ${email} (Resend)`,
+          );
+        }
       } catch (error: unknown) {
         this.logger.error(
           `Erreur Resend confirmation: ${(error as Error).message}`,

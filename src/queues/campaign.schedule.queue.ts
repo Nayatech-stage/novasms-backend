@@ -50,15 +50,14 @@ export class CampaignScheduleProcessor extends WorkerHost {
     const nowHour = new Date().getUTCHours();
     const inQuietHours = nowHour >= 22 || nowHour < 8;
     if (inQuietHours) {
-      // Replanifier dans 30 min pour respecter la fenêtre d'envoi
-      const delayMs = 30 * 60 * 1000;
-      await this.dispatchQueue.add('reschedule-quiet-hours', job.data, {
-        delay: delayMs,
-        jobId: `reschedule-${campaignId}-${Date.now()}`,
-        removeOnComplete: true,
+      // Replanifier dans 30 min et remettre SCHEDULED pour que le cron la reprenne
+      const newScheduledAt = new Date(Date.now() + 30 * 60 * 1000);
+      await this.prisma.campaign.update({
+        where: { id: campaignId },
+        data: { status: CampaignStatus.SCHEDULED, scheduledAt: newScheduledAt },
       });
       this.logger.log(
-        `Campaign ${campaignId} deferred 30min (quiet hours: ${nowHour}h UTC)`,
+        `Campaign ${campaignId} replanifiée à ${newScheduledAt.toISOString()} (heure creuse ${nowHour}h UTC)`,
       );
       return { success: false, reason: 'quiet-hours-deferred' };
     }

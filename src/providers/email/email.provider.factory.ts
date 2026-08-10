@@ -133,13 +133,17 @@ export class EmailProviderFactory {
     );
 
     if (primary === 'mock') {
-      this.logger.warn('EMAIL_PROVIDER=mock, using local mock provider');
+      this.logger.warn(
+        '⚠️  EMAIL_PROVIDER=mock — les campagnes email sont simulées, aucun email ne sera envoyé aux contacts. ' +
+          'Pour envoyer de vrais emails, définir EMAIL_PROVIDER=resend et RESEND_API_KEY.',
+      );
       return new MockEmailProvider();
     }
     // If no provider credentials are configured and no overrides provided, use mock.
     if (!primaryConfigured && !secondaryConfigured && !hasOverrides) {
       this.logger.warn(
-        'No email provider credentials configured, using local mock provider',
+        '⚠️  Aucune clé API email configurée (RESEND_API_KEY / BREVO_API_KEY manquante) — ' +
+          'fallback sur MockEmailProvider. Aucun email de campagne ne sera envoyé aux contacts.',
       );
       return new MockEmailProvider();
     }
