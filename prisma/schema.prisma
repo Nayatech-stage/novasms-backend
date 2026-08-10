@@ -396,7 +396,7 @@ model Analytic {
   createdAt  DateTime?       @db.Timestamp(6)
   action     AnalyticAction?
   campaign   Campaign?       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  contact    Contact?        @relation(fields: [contactId], references: [id])
+  contact    Contact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
   @@index([campaignId, action])
   @@index([contactId, createdAt])

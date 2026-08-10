@@ -353,26 +353,23 @@ export class ContactsController {
   }
 
   @RequireRoles(UserRole.Admin, UserRole.Editor)
-  @Delete(':id')
-  @ApiOperation({ summary: 'Supprimer un contact' })
-  async remove(@Param('id') id: string, @Request() req: TenantRequest) {
-    const accountId = req.accountId;
-    if (!accountId) throw new BadRequestException('accountId manquant');
-    return this.contactsService.remove(accountId, id);
-  }
-
-  @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Delete('bulk/delete')
   @ApiOperation({ summary: 'Supprimer plusieurs contacts en une requête' })
   async bulkRemove(
-    @Body() body: { ids: string[] },
+    @Query('ids') rawIds: string | undefined,
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    if (!Array.isArray(body?.ids) || body.ids.length === 0)
+    const ids = rawIds
+      ? rawIds
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    if (ids.length === 0)
       throw new BadRequestException('ids requis (tableau non vide)');
-    return this.contactsService.bulkRemove(accountId, body.ids);
+    return this.contactsService.bulkRemove(accountId, ids);
   }
 
   @RequireRoles(UserRole.Admin, UserRole.Editor)
@@ -393,6 +390,15 @@ export class ContactsController {
       tag: tag || undefined,
       location: location || undefined,
     });
+  }
+
+  @RequireRoles(UserRole.Admin, UserRole.Editor)
+  @Delete(':id')
+  @ApiOperation({ summary: 'Supprimer un contact' })
+  async remove(@Param('id') id: string, @Request() req: TenantRequest) {
+    const accountId = req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    return this.contactsService.remove(accountId, id);
   }
 
   @Get('validate-phone')
