@@ -47,14 +47,17 @@ export class CampaignScheduleProcessor extends WorkerHost {
       return { success: false, reason: 'cancelled' };
     }
 
-    // US-009: fenêtre horaire — ne pas envoyer entre 22h et 8h UTC
+    // US-009: fenêtre horaire — ne pas envoyer entre 22h et 8h heure locale
+    // QUIET_HOURS_UTC_OFFSET = décalage UTC de la région (0 = Côte d'Ivoire UTC+0)
+    const tzOffset = parseInt(process.env.QUIET_HOURS_UTC_OFFSET ?? '0', 10);
     const nowDate = new Date();
-    const nowHour = nowDate.getUTCHours();
-    const inQuietHours = nowHour >= 22 || nowHour < 8;
+    const localHour = (nowDate.getUTCHours() + tzOffset + 24) % 24;
+    const inQuietHours = localHour >= 22 || localHour < 8;
     if (inQuietHours) {
-      // Calculer exactement la prochaine fenêtre 8h UTC
+      // Prochaine 8h locale → convertir en UTC pour le scheduler
+      const next8amUTCHour = (((8 - tzOffset) % 24) + 24) % 24;
       const next8amUTC = new Date(nowDate);
-      next8amUTC.setUTCHours(8, 0, 0, 0);
+      next8amUTC.setUTCHours(next8amUTCHour, 0, 0, 0);
       if (next8amUTC <= nowDate) {
         next8amUTC.setUTCDate(next8amUTC.getUTCDate() + 1);
       }
@@ -64,7 +67,7 @@ export class CampaignScheduleProcessor extends WorkerHost {
         data: { status: CampaignStatus.SCHEDULED, scheduledAt: next8amUTC },
       });
 
-      // Re-enqueue le job dans la schedule queue pour 8h UTC — le job BullMQ
+      // Re-enqueue le job dans la schedule queue pour 8h locale — le job BullMQ
       // actuel ayant déjà été consommé, sans re-enqueue la campagne resterait
       // bloquée en SCHEDULED pour toujours.
       const deferDelay = next8amUTC.getTime() - Date.now();
@@ -79,7 +82,7 @@ export class CampaignScheduleProcessor extends WorkerHost {
       );
 
       this.logger.log(
-        `Campaign ${campaignId} replanifiée à ${next8amUTC.toISOString()} (heure creuse ${nowHour}h UTC, délai ${Math.round(deferDelay / 60000)} min)`,
+        `Campaign ${campaignId} replanifiée à ${next8amUTC.toISOString()} (heure creuse ${localHour}h locale UTC+${tzOffset}, délai ${Math.round(deferDelay / 60000)} min)`,
       );
       return { success: false, reason: 'quiet-hours-deferred' };
     }
