@@ -543,6 +543,11 @@ export class WebhookService {
             createdAt: now,
           },
         });
+        this.eventEmitter.emit('campaign.opened', {
+          accountId: send.campaign.accountId,
+          campaignId: send.campaignId,
+          contactId: send.contactId,
+        });
       }
     } else if (event.includes('click')) {
       const result = await this.prisma.send.updateMany({
@@ -561,6 +566,11 @@ export class WebhookService {
             action: AnalyticAction.Click,
             createdAt: now,
           },
+        });
+        this.eventEmitter.emit('campaign.clicked', {
+          accountId: send.campaign.accountId,
+          campaignId: send.campaignId,
+          contactId: send.contactId,
         });
       }
     } else if (
