@@ -381,13 +381,18 @@ export class ContactsController {
     summary: 'Supprimer tous les contacts (avec filtres optionnels)',
   })
   async bulkRemoveAll(
-    @Body()
-    body: { search?: string; tag?: string; location?: string } | undefined,
+    @Query('search') search: string | undefined,
+    @Query('tag') tag: string | undefined,
+    @Query('location') location: string | undefined,
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
-    return this.contactsService.bulkRemoveAll(accountId, body ?? {});
+    return this.contactsService.bulkRemoveAll(accountId, {
+      search: search || undefined,
+      tag: tag || undefined,
+      location: location || undefined,
+    });
   }
 
   @Get('validate-phone')

@@ -228,10 +228,13 @@ export class AnalyticsService {
   async getCampaignReport(accountId: string, campaignId: string) {
     const campaign = await this.prisma.campaign.findFirst({
       where: { id: campaignId, accountId },
+      include: { abResults: true },
     });
     if (!campaign) return { error: 'Campaign not found' };
 
     const totalSent = campaign.sentCount || 0;
+    const isAbCampaign = Boolean(campaign.subjectB);
+
     const [opened, clicked, bounced, unsubscribed] = await Promise.all([
       this.prisma.analytic.count({
         where: { campaignId, action: 'Open' } as any,
@@ -259,6 +262,40 @@ export class AnalyticsService {
       this.prisma.clickHeatmap.findMany({ where: { campaignId } }),
     ]);
 
+    const abReport = isAbCampaign
+      ? (() => {
+          const resultA = campaign.abResults.find((r) => r.variant === 'A');
+          const resultB = campaign.abResults.find((r) => r.variant === 'B');
+          const sentA = resultA?.sentCount ?? campaign.sentCountA ?? 0;
+          const sentB = resultB?.sentCount ?? campaign.sentCountB ?? 0;
+          const openedA = resultA?.openedCount ?? campaign.openedCountA ?? 0;
+          const openedB = resultB?.openedCount ?? campaign.openedCountB ?? 0;
+          const clickedA = resultA?.clickedCount ?? campaign.clickedCountA ?? 0;
+          const clickedB = resultB?.clickedCount ?? campaign.clickedCountB ?? 0;
+          return {
+            enabled: true,
+            winner: campaign.abWinner ?? null,
+            subjectA: campaign.subjectA ?? '',
+            subjectB: campaign.subjectB ?? '',
+            splitPct: campaign.abSplitPct,
+            variantA: {
+              sent: sentA,
+              opened: openedA,
+              clicked: clickedA,
+              openRate: sentA > 0 ? (openedA / sentA) * 100 : 0,
+              clickRate: sentA > 0 ? (clickedA / sentA) * 100 : 0,
+            },
+            variantB: {
+              sent: sentB,
+              opened: openedB,
+              clicked: clickedB,
+              openRate: sentB > 0 ? (openedB / sentB) * 100 : 0,
+              clickRate: sentB > 0 ? (clickedB / sentB) * 100 : 0,
+            },
+          };
+        })()
+      : null;
+
     return {
       campaign: { id: campaign.id, name: campaign.name },
       totalSent,
@@ -266,6 +303,7 @@ export class AnalyticsService {
       clicked,
       bounced,
       unsubscribed,
+      abReport,
       contactsOpened: contactsOpened.map((a: any) => ({
         contact: {
           email: a.contact?.email ?? '',

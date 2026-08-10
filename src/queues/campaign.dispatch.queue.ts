@@ -569,12 +569,26 @@ export class CampaignDispatchProcessor extends WorkerHost {
         ? statsB.filter((s) => Boolean(s.clickedAt)).length / statsB.length
         : 0;
 
-    // Fallback strategy: click rate first, then open rate.
-    const winner: CampaignVariant =
-      clickRateB > clickRateA ||
-      (clickRateB === clickRateA && openRateB > openRateA)
-        ? 'B'
-        : 'A';
+    // Respect winnerCriteria from contentJson.abTestConfig (open_rate / click_rate / conversion).
+    const contentJsonObj = campaign.contentJson as Record<
+      string,
+      unknown
+    > | null;
+    const abConfig = contentJsonObj?.abTestConfig as
+      | Record<string, unknown>
+      | undefined;
+    const winnerCriteria = (abConfig?.winnerCriteria as string) ?? 'click_rate';
+    let winner: CampaignVariant;
+    if (winnerCriteria === 'open_rate') {
+      winner = openRateB > openRateA ? 'B' : 'A';
+    } else {
+      // click_rate or conversion: click first, open as tiebreaker
+      winner =
+        clickRateB > clickRateA ||
+        (clickRateB === clickRateA && openRateB > openRateA)
+          ? 'B'
+          : 'A';
+    }
 
     await this.prisma.campaign.update({
       where: { id: campaignId },
