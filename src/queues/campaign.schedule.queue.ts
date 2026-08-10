@@ -17,6 +17,7 @@ export class CampaignScheduleProcessor extends WorkerHost {
   constructor(
     private prisma: PrismaService,
     @InjectQueue('campaign-dispatch') private dispatchQueue: Queue,
+    @InjectQueue('campaign-schedule') private scheduleQueue: Queue,
   ) {
     super();
   }
@@ -47,17 +48,38 @@ export class CampaignScheduleProcessor extends WorkerHost {
     }
 
     // US-009: fenêtre horaire — ne pas envoyer entre 22h et 8h UTC
-    const nowHour = new Date().getUTCHours();
+    const nowDate = new Date();
+    const nowHour = nowDate.getUTCHours();
     const inQuietHours = nowHour >= 22 || nowHour < 8;
     if (inQuietHours) {
-      // Replanifier dans 30 min et remettre SCHEDULED pour que le cron la reprenne
-      const newScheduledAt = new Date(Date.now() + 30 * 60 * 1000);
+      // Calculer exactement la prochaine fenêtre 8h UTC
+      const next8amUTC = new Date(nowDate);
+      next8amUTC.setUTCHours(8, 0, 0, 0);
+      if (next8amUTC <= nowDate) {
+        next8amUTC.setUTCDate(next8amUTC.getUTCDate() + 1);
+      }
+
       await this.prisma.campaign.update({
         where: { id: campaignId },
-        data: { status: CampaignStatus.SCHEDULED, scheduledAt: newScheduledAt },
+        data: { status: CampaignStatus.SCHEDULED, scheduledAt: next8amUTC },
       });
+
+      // Re-enqueue le job dans la schedule queue pour 8h UTC — le job BullMQ
+      // actuel ayant déjà été consommé, sans re-enqueue la campagne resterait
+      // bloquée en SCHEDULED pour toujours.
+      const deferDelay = next8amUTC.getTime() - Date.now();
+      await this.scheduleQueue.add(
+        'trigger-campaign',
+        { campaignId, accountId, channelType: job.data.channelType },
+        {
+          delay: Math.max(0, deferDelay),
+          jobId: `sched-${campaignId}-quiet-${next8amUTC.getTime()}`,
+          removeOnComplete: true,
+        },
+      );
+
       this.logger.log(
-        `Campaign ${campaignId} replanifiée à ${newScheduledAt.toISOString()} (heure creuse ${nowHour}h UTC)`,
+        `Campaign ${campaignId} replanifiée à ${next8amUTC.toISOString()} (heure creuse ${nowHour}h UTC, délai ${Math.round(deferDelay / 60000)} min)`,
       );
       return { success: false, reason: 'quiet-hours-deferred' };
     }

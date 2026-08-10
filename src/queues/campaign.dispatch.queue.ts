@@ -456,6 +456,29 @@ export class CampaignDispatchProcessor extends WorkerHost {
         where: { id: campaignId },
         data: { status: CampaignStatus.SENT },
       });
+
+      // Notification envoyée une seule fois quand TOUS les envois sont terminés
+      try {
+        const doneCampaign = await this.prisma.campaign.findUnique({
+          where: { id: campaignId },
+          include: { account: { select: { adminEmail: true } } },
+        });
+        if (doneCampaign?.account) {
+          await this.mailService.sendCampaignSentNotification(
+            doneCampaign.account.adminEmail,
+            {
+              campaignName: doneCampaign.name,
+              channelType: doneCampaign.channelType,
+              sentAt: new Date(),
+            },
+          );
+        }
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.logger.error(
+          `Failed to send notification for campaign ${campaignId}: ${errMsg}`,
+        );
+      }
     }
 
     if (sends.length === chunkSize) {
@@ -473,31 +496,6 @@ export class CampaignDispatchProcessor extends WorkerHost {
           removeOnComplete: true,
         },
       );
-    }
-
-    // ✅ Send notification email when campaign dispatch completes
-    if (successCount > 0) {
-      try {
-        const campaign = await this.prisma.campaign.findUnique({
-          where: { id: campaignId },
-          include: { account: { select: { adminEmail: true } } },
-        });
-        if (campaign?.account) {
-          await this.mailService.sendCampaignSentNotification(
-            campaign.account.adminEmail,
-            {
-              campaignName: campaign.name,
-              channelType: campaign.channelType,
-              sentAt: new Date(),
-            },
-          );
-        }
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        this.logger.error(
-          `Failed to send notification for campaign ${campaignId}: ${errMsg}`,
-        );
-      }
     }
 
     return {

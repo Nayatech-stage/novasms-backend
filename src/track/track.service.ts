@@ -5,6 +5,7 @@ import {
   SendStatus,
   SendVariant,
 } from '@prisma/client';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   verifyTrackingToken,
@@ -15,7 +16,10 @@ import {
 export class TrackService {
   private readonly logger = new Logger(TrackService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventEmitter: EventEmitter2,
+  ) {}
 
   async trackOpen(sendId: string, token?: string): Promise<void> {
     if (!sendId || !verifyTrackingToken(sendId, token)) {
@@ -102,6 +106,13 @@ export class TrackService {
           },
         },
       });
+    });
+
+    // Déclenche les automations "campaign_opened" (même chemin que le webhook Resend)
+    this.eventEmitter.emit('campaign.opened', {
+      accountId: send.campaign.accountId,
+      campaignId: send.campaignId,
+      contactId: send.contactId,
     });
   }
 
@@ -218,6 +229,13 @@ export class TrackService {
           },
         },
       });
+    });
+
+    // Déclenche les automations "link_clicked" (même chemin que le webhook Resend)
+    this.eventEmitter.emit('campaign.clicked', {
+      accountId: send.campaign.accountId,
+      campaignId: send.campaignId,
+      contactId: send.contactId,
     });
 
     this.logger.debug(`Tracked click for send ${sendId}`);

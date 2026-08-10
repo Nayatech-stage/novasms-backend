@@ -34,7 +34,15 @@ export class ResendProvider implements EmailProvider {
     html: string,
   ): Promise<EmailSendResult> {
     try {
-      const toRecipient = this.testRecipient || to;
+      // RESEND_TEST_RECIPIENT : redirection seulement hors production
+      const isProduction = process.env.NODE_ENV === 'production';
+      const toRecipient =
+        !isProduction && this.testRecipient ? this.testRecipient : to;
+      if (!isProduction && this.testRecipient && this.testRecipient !== to) {
+        this.logger.warn(
+          `TEST MODE: redirection campagne ${to} → ${this.testRecipient}`,
+        );
+      }
       const result = await this.resend.emails.send({
         from: this.from,
         to: [toRecipient],
