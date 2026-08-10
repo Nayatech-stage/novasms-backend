@@ -32,6 +32,7 @@ export class ResendProvider implements EmailProvider {
     to: string,
     subject: string,
     html: string,
+    sendId?: string,
   ): Promise<EmailSendResult> {
     try {
       // RESEND_TEST_RECIPIENT : redirection seulement hors production
@@ -48,6 +49,7 @@ export class ResendProvider implements EmailProvider {
         to: [toRecipient],
         subject,
         html,
+        ...(sendId ? { tags: [{ name: 'sendId', value: sendId }] } : {}),
       });
 
       if (result.error) {

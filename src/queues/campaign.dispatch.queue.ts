@@ -794,7 +794,7 @@ export class CampaignDispatchProcessor extends WorkerHost {
       unsubscribeUrl,
     });
     const html = applyTrackingToEmailHtml(renderedHtml, sendId);
-    const result = await provider.send(email, subject, html);
+    const result = await provider.send(email, subject, html, sendId);
 
     if (!result.success) {
       throw new Error(result.error || 'Email provider send failed');

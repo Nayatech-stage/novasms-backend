@@ -18,7 +18,12 @@ export type EmailContact = {
  * Le service metier n'a pas besoin de connaitre l'implementation concrete.
  */
 export interface EmailProvider {
-  send(to: string, subject: string, html: string): Promise<EmailSendResult>;
+  send(
+    to: string,
+    subject: string,
+    html: string,
+    sendId?: string,
+  ): Promise<EmailSendResult>;
   sendBatch(
     contacts: EmailContact[],
     subject: string,

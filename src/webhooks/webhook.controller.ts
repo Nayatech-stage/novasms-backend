@@ -70,13 +70,10 @@ export class WebhookController {
     @Body() payload: Record<string, unknown>,
     @Req() req: Request,
   ) {
-    this.webhookService.assertProviderSignature(
-      'resend',
+    this.webhookService.assertSvixSignature(
       process.env.RESEND_WEBHOOK_SECRET,
       headers,
       req,
-      payload,
-      ['x-resend-signature', 'resend-signature', 'x-signature', 'signature'],
     );
     const result = await this.webhookService.receiveResendWebhook(payload);
     return { success: true, ...result };

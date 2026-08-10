@@ -12,6 +12,7 @@ import {
 import type { Campaign, Account, Contact } from '@prisma/client';
 import * as crypto from 'crypto';
 import type { Request } from 'express';
+import { Webhook as SvixWebhook } from 'svix';
 
 type CampaignWithAccount = Campaign & { account: Account };
 
@@ -160,6 +161,28 @@ export class WebhookService {
     });
     if (!hasMatch) {
       this.logger.warn('Stripe webhook rejected: invalid signature');
+      throw new BadRequestException('Invalid webhook signature');
+    }
+  }
+
+  assertSvixSignature(
+    secret: string | undefined,
+    headers: WebhookHeaders,
+    req: Request,
+  ): void {
+    if (!secret?.trim()) return;
+    const rawBody = this.getRawBody(req, {});
+    const svixHeaders: Record<string, string> = {};
+    for (const key of ['svix-id', 'svix-timestamp', 'svix-signature']) {
+      const val = headers[key];
+      if (typeof val === 'string') svixHeaders[key] = val;
+      else if (Array.isArray(val) && typeof val[0] === 'string')
+        svixHeaders[key] = val[0];
+    }
+    try {
+      new SvixWebhook(secret).verify(rawBody, svixHeaders);
+    } catch {
+      this.logger.warn('Resend webhook rejected: invalid Svix signature');
       throw new BadRequestException('Invalid webhook signature');
     }
   }
@@ -456,7 +479,21 @@ export class WebhookService {
     const eventType =
       asString(payload.type) || asString(payload.event) || 'unknown';
     const data = asRecord(payload.data) || payload;
-    const sendId = asString(data.sendId) || asString(data.send_id);
+
+    // Resend includes the tags we attached at send time
+    const tags = data.tags;
+    let sendId: string | undefined;
+    if (Array.isArray(tags)) {
+      const tagItem = tags.find(
+        (t): t is { name: string; value: string } =>
+          typeof t === 'object' &&
+          t !== null &&
+          (t as { name?: unknown }).name === 'sendId',
+      );
+      sendId = tagItem?.value;
+    } else if (tags && typeof tags === 'object') {
+      sendId = asString((tags as Record<string, unknown>)['sendId']);
+    }
 
     if (!sendId) {
       return { processed: false, reason: 'missing-send-id', eventType };
