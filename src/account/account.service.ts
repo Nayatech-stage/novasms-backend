@@ -384,31 +384,43 @@ export class AccountService {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const [byChannel, bySource, byMember, monthTotal] = await Promise.all([
-      this.prisma.creditUsage.groupBy({
-        by: ['channel'],
-        where: { accountId },
-        _sum: { totalCost: true, contacts: true },
-        _count: { id: true },
-      }),
-      this.prisma.creditUsage.groupBy({
-        by: ['source'],
-        where: { accountId },
-        _sum: { totalCost: true },
-        _count: { id: true },
-      }),
-      this.prisma.creditUsage.groupBy({
-        by: ['userId'],
-        where: { accountId, userId: { not: null } },
-        _sum: { totalCost: true },
-        _count: { id: true },
-        orderBy: { _sum: { totalCost: 'desc' } },
-      }),
-      this.prisma.creditUsage.aggregate({
-        where: { accountId, createdAt: { gte: startOfMonth } },
-        _sum: { totalCost: true },
-      }),
-    ]);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const monthFilter = { accountId, createdAt: { gte: startOfMonth } };
+
+    const [byChannel, bySource, byMember, monthTotal, yearTotal, allTimeTotal] =
+      await Promise.all([
+        this.prisma.creditUsage.groupBy({
+          by: ['channel'],
+          where: monthFilter,
+          _sum: { totalCost: true, contacts: true },
+          _count: { id: true },
+        }),
+        this.prisma.creditUsage.groupBy({
+          by: ['source'],
+          where: monthFilter,
+          _sum: { totalCost: true },
+          _count: { id: true },
+        }),
+        this.prisma.creditUsage.groupBy({
+          by: ['userId'],
+          where: { ...monthFilter, userId: { not: null } },
+          _sum: { totalCost: true },
+          _count: { id: true },
+          orderBy: { _sum: { totalCost: 'desc' } },
+        }),
+        this.prisma.creditUsage.aggregate({
+          where: monthFilter,
+          _sum: { totalCost: true },
+        }),
+        this.prisma.creditUsage.aggregate({
+          where: { accountId, createdAt: { gte: startOfYear } },
+          _sum: { totalCost: true },
+        }),
+        this.prisma.creditUsage.aggregate({
+          where: { accountId },
+          _sum: { totalCost: true },
+        }),
+      ]);
 
     const userIds = byMember.map((m) => m.userId).filter(Boolean) as string[];
     const users = userIds.length
@@ -427,6 +439,8 @@ export class AccountService {
 
     return {
       monthTotal: Number(monthTotal._sum.totalCost ?? 0),
+      yearTotal: Number(yearTotal._sum.totalCost ?? 0),
+      allTimeTotal: Number(allTimeTotal._sum.totalCost ?? 0),
       byChannel: byChannel.map((r) => ({
         channel: r.channel,
         totalCost: Number(r._sum.totalCost ?? 0),
