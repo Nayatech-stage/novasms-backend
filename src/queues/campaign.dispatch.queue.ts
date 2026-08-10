@@ -283,152 +283,166 @@ export class CampaignDispatchProcessor extends WorkerHost {
       return { success: true, sent: 0, campaignId };
     }
 
-    const results = await Promise.allSettled(
-      sends.map(async (sendRecord) => {
-        try {
-          const { contact } = sendRecord;
-          if (contact.optOut) {
-            await this.prisma.send.update({
-              where: { id: sendRecord.id },
-              data: {
-                status: SendStatus.UNSUBSCRIBED,
-                variant: remainingContacts
-                  ? (variant as SendVariant)
-                  : sendRecord.variant,
-              },
-            });
-            return { success: false };
-          }
+    // Send with limited concurrency (10 at a time) to avoid Resend rate limits.
+    // 500 simultaneous calls cause 429s which get marked BOUNCED and never retried.
+    const BATCH_SIZE = 10;
+    const allResults: PromiseSettledResult<{ success: boolean }>[] = [];
+    for (
+      let batchStart = 0;
+      batchStart < sends.length;
+      batchStart += BATCH_SIZE
+    ) {
+      const batchResults = await Promise.allSettled(
+        sends
+          .slice(batchStart, batchStart + BATCH_SIZE)
+          .map(async (sendRecord) => {
+            try {
+              const { contact } = sendRecord;
+              if (contact.optOut) {
+                await this.prisma.send.update({
+                  where: { id: sendRecord.id },
+                  data: {
+                    status: SendStatus.UNSUBSCRIBED,
+                    variant: remainingContacts
+                      ? (variant as SendVariant)
+                      : sendRecord.variant,
+                  },
+                });
+                return { success: false };
+              }
 
-          const contactContext = {
-            firstName: contact.firstName || undefined,
-            lastName: contact.lastName || undefined,
-            fullName:
-              [contact.firstName, contact.lastName]
-                .filter(Boolean)
-                .join(' ')
-                .trim() || undefined,
-            email: contact.email || undefined,
-            phone: contact.phone || undefined,
-            companyName: campaign.account?.companyName || undefined,
-            promoCode: campaign.promoCode || undefined,
-          };
+              const contactContext = {
+                firstName: contact.firstName || undefined,
+                lastName: contact.lastName || undefined,
+                fullName:
+                  [contact.firstName, contact.lastName]
+                    .filter(Boolean)
+                    .join(' ')
+                    .trim() || undefined,
+                email: contact.email || undefined,
+                phone: contact.phone || undefined,
+                companyName: campaign.account?.companyName || undefined,
+                promoCode: campaign.promoCode || undefined,
+              };
 
-          const content = personalizeText(
-            campaign.content || '',
-            contactContext,
-          );
+              const content = personalizeText(
+                campaign.content || '',
+                contactContext,
+              );
 
-          const effectiveVariant = remainingContacts
-            ? variant
-            : sendRecord.variant === SendVariant.B
-              ? 'B'
-              : sendRecord.variant === SendVariant.A
-                ? 'A'
-                : undefined;
-          const subject =
-            effectiveVariant === 'B'
-              ? campaign.subjectB || campaign.subject || ''
-              : effectiveVariant === 'A'
-                ? campaign.subjectA || campaign.subject || ''
-                : campaign.subject || '';
-          const variantConfig = resolveVariantABConfig(
-            campaign.contentJson,
-            effectiveVariant,
-          );
-          const smsVariantMessage =
-            typeof variantConfig?.smsMessage === 'string'
-              ? variantConfig.smsMessage
-              : undefined;
-          const smsContent = smsVariantMessage
-            ? personalizeText(smsVariantMessage, contactContext)
-            : content;
-          const variantEmailContentJson = buildVariantEmailContentJson(
-            campaign.contentJson,
-            variantConfig,
-            subject,
-          );
-          const personalizedSubject = personalizeText(subject, {
-            firstName: contact.firstName || undefined,
-            lastName: contact.lastName || undefined,
-            fullName:
-              [contact.firstName, contact.lastName]
-                .filter(Boolean)
-                .join(' ')
-                .trim() || undefined,
-            email: contact.email || undefined,
-            phone: contact.phone || undefined,
-            companyName: campaign.account?.companyName || undefined,
-            promoCode: campaign.promoCode || undefined,
-          });
+              const effectiveVariant = remainingContacts
+                ? variant
+                : sendRecord.variant === SendVariant.B
+                  ? 'B'
+                  : sendRecord.variant === SendVariant.A
+                    ? 'A'
+                    : undefined;
+              const subject =
+                effectiveVariant === 'B'
+                  ? campaign.subjectB || campaign.subject || ''
+                  : effectiveVariant === 'A'
+                    ? campaign.subjectA || campaign.subject || ''
+                    : campaign.subject || '';
+              const variantConfig = resolveVariantABConfig(
+                campaign.contentJson,
+                effectiveVariant,
+              );
+              const smsVariantMessage =
+                typeof variantConfig?.smsMessage === 'string'
+                  ? variantConfig.smsMessage
+                  : undefined;
+              const smsContent = smsVariantMessage
+                ? personalizeText(smsVariantMessage, contactContext)
+                : content;
+              const variantEmailContentJson = buildVariantEmailContentJson(
+                campaign.contentJson,
+                variantConfig,
+                subject,
+              );
+              const personalizedSubject = personalizeText(subject, {
+                firstName: contact.firstName || undefined,
+                lastName: contact.lastName || undefined,
+                fullName:
+                  [contact.firstName, contact.lastName]
+                    .filter(Boolean)
+                    .join(' ')
+                    .trim() || undefined,
+                email: contact.email || undefined,
+                phone: contact.phone || undefined,
+                companyName: campaign.account?.companyName || undefined,
+                promoCode: campaign.promoCode || undefined,
+              });
 
-          if (campaign.channelType === 'SMS') {
-            if (!contact.phone) {
-              throw new Error('Contact phone missing');
+              if (campaign.channelType === 'SMS') {
+                if (!contact.phone) {
+                  throw new Error('Contact phone missing');
+                }
+                const normalizedPhone = normalizeSmsPhoneNumber(contact.phone);
+                if (!normalizedPhone) {
+                  throw new Error('Contact phone invalid');
+                }
+                await this.sendSms(normalizedPhone, smsContent);
+              } else if (campaign.channelType === 'WhatsApp') {
+                // US: Canal WhatsApp end-to-end
+                if (!contact.phone) {
+                  throw new Error('Contact phone missing for WhatsApp');
+                }
+                const normalizedPhone = normalizeSmsPhoneNumber(contact.phone);
+                if (!normalizedPhone) {
+                  throw new Error('Contact phone invalid for WhatsApp');
+                }
+                await this.sendWhatsApp(normalizedPhone, smsContent);
+              } else {
+                if (!contact.email) {
+                  throw new Error('Contact email missing');
+                }
+                await this.sendEmail(
+                  contact.email,
+                  personalizedSubject,
+                  variantEmailContentJson,
+                  content,
+                  contactContext,
+                  sendRecord.id,
+                  contact.id,
+                  campaign.accountId,
+                );
+              }
+
+              await this.prisma.send.update({
+                where: { id: sendRecord.id },
+                data: {
+                  status: SendStatus.SENT,
+                  variant: remainingContacts
+                    ? (variant as SendVariant)
+                    : sendRecord.variant,
+                  sentAt: new Date(),
+                },
+              });
+
+              // US-016 – Atomic credit deduction per successful send
+              await this.deductSendCredit(campaign.accountId, campaign);
+
+              return { success: true };
+            } catch (err: unknown) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              await this.prisma.send.update({
+                where: { id: sendRecord.id },
+                data: {
+                  status: SendStatus.BOUNCED,
+                  variant: remainingContacts
+                    ? (variant as SendVariant)
+                    : sendRecord.variant,
+                  sentAt: new Date(),
+                  bouncedReason: errMsg,
+                },
+              });
+              return { success: false };
             }
-            const normalizedPhone = normalizeSmsPhoneNumber(contact.phone);
-            if (!normalizedPhone) {
-              throw new Error('Contact phone invalid');
-            }
-            await this.sendSms(normalizedPhone, smsContent);
-          } else if (campaign.channelType === 'WhatsApp') {
-            // US: Canal WhatsApp end-to-end
-            if (!contact.phone) {
-              throw new Error('Contact phone missing for WhatsApp');
-            }
-            const normalizedPhone = normalizeSmsPhoneNumber(contact.phone);
-            if (!normalizedPhone) {
-              throw new Error('Contact phone invalid for WhatsApp');
-            }
-            await this.sendWhatsApp(normalizedPhone, smsContent);
-          } else {
-            if (!contact.email) {
-              throw new Error('Contact email missing');
-            }
-            await this.sendEmail(
-              contact.email,
-              personalizedSubject,
-              variantEmailContentJson,
-              content,
-              contactContext,
-              sendRecord.id,
-              contact.id,
-              campaign.accountId,
-            );
-          }
-
-          await this.prisma.send.update({
-            where: { id: sendRecord.id },
-            data: {
-              status: SendStatus.SENT,
-              variant: remainingContacts
-                ? (variant as SendVariant)
-                : sendRecord.variant,
-              sentAt: new Date(),
-            },
-          });
-
-          // US-016 – Atomic credit deduction per successful send
-          await this.deductSendCredit(campaign.accountId, campaign);
-
-          return { success: true };
-        } catch (err: unknown) {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          await this.prisma.send.update({
-            where: { id: sendRecord.id },
-            data: {
-              status: SendStatus.BOUNCED,
-              variant: remainingContacts
-                ? (variant as SendVariant)
-                : sendRecord.variant,
-              sentAt: new Date(),
-              bouncedReason: errMsg,
-            },
-          });
-          return { success: false };
-        }
-      }),
-    );
+          }),
+      );
+      allResults.push(...batchResults);
+    }
+    const results = allResults;
 
     const successCount = results.filter(
       (r): r is PromiseFulfilledResult<{ success: boolean }> =>
