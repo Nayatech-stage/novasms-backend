@@ -406,7 +406,12 @@ export class AuthService {
       };
     }
 
-    const tokens = this.generateTokens(authAccount, primaryUser.role);
+    const tokens = this.generateTokens(
+      authAccount,
+      primaryUser.role,
+      undefined,
+      primaryUser.id,
+    );
 
     return {
       success: true,
@@ -459,6 +464,7 @@ export class AuthService {
       authAccount,
       memberUser.role as UserRole,
       memberUser.email,
+      memberUser.id,
     );
 
     return {
@@ -568,7 +574,12 @@ export class AuthService {
       },
     });
 
-    const tokens = this.generateTokens(authAccount, primaryUser.role);
+    const tokens = this.generateTokens(
+      authAccount,
+      primaryUser.role,
+      undefined,
+      primaryUser.id,
+    );
 
     return {
       success: true,
@@ -617,7 +628,12 @@ export class AuthService {
 
     const authAccount = account as unknown as AuthAccount;
     const primaryUser = await this.getPrimaryUser(authAccount);
-    const tokens = this.generateTokens(authAccount, primaryUser.role);
+    const tokens = this.generateTokens(
+      authAccount,
+      primaryUser.role,
+      undefined,
+      primaryUser.id,
+    );
 
     return {
       success: true,
@@ -800,11 +816,13 @@ export class AuthService {
     account: AuthAccount,
     role: UserRole,
     emailOverride?: string,
+    userId?: string,
   ): AuthTokens {
     const payload = {
       sub: account.id,
       email: emailOverride ?? account.adminEmail,
       accountId: account.id,
+      userId: userId ?? null,
       role,
       onboardingCompleted: account.onboardingCompleted,
     };

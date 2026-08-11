@@ -23,11 +23,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     sub?: string;
     email?: string;
     role?: string;
+    userId?: string | null;
     iat?: number;
     exp?: number;
     [key: string]: unknown;
   }) {
-    // payload contient: { sub: accountId, email, iat, exp }
+    // payload contient: { sub: accountId, email, userId, iat, exp }
     if (!payload.sub || !payload.email) {
       throw new UnauthorizedException('Token invalide');
     }
@@ -44,6 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     return {
       accountId: payload.sub,
+      userId: payload.userId ?? null,
       email: payload.email,
       role: payload.role || 'merchant',
       iat: payload.iat,

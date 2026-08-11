@@ -347,7 +347,9 @@ export class CampaignsController {
         return { success: false, error: 'Date de programmation requise' };
       }
 
-      const userId = (req as any)?.user?.sub as string | undefined;
+      const userId = ((req as any)?.user?.userId || (req as any)?.user?.sub) as
+        | string
+        | undefined;
       const result = await this.campaignsService.sendCampaign(
         accountId,
         id,

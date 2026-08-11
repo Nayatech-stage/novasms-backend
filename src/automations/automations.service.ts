@@ -1569,6 +1569,7 @@ export class AutomationsService {
     await this.prisma.creditUsage.create({
       data: {
         accountId,
+        userId: null,
         channel: channel.toUpperCase(),
         source: 'AUTOMATION',
         sourceId: automationId ?? null,
