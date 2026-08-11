@@ -321,17 +321,14 @@ export class ContactsService {
   }
 
   async remove(accountId: string, id: string): Promise<{ success: true }> {
-    try {
-      await this.prisma.contact.delete({ where: { id, accountId } });
-    } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2025'
-      ) {
-        throw new NotFoundException('Contact introuvable');
-      }
-      throw e;
+    const exists = await this.prisma.contact.findUnique({
+      where: { id },
+      select: { accountId: true },
+    });
+    if (!exists || exists.accountId !== accountId) {
+      throw new NotFoundException('Contact introuvable');
     }
+    await this.prisma.contact.delete({ where: { id } });
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
