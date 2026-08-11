@@ -381,14 +381,21 @@ export class ContactsController {
     summary: 'Supprimer tous les contacts (avec filtres optionnels)',
   })
   async bulkRemoveAll(@Request() req: TenantRequest) {
-    const accountId = req.accountId;
+    const accountId =
+      req.accountId ?? (req as any).user?.accountId ?? (req as any).user?.sub;
     if (!accountId) throw new BadRequestException('accountId manquant');
     const q = (req as any).query ?? {};
-    return this.contactsService.bulkRemoveAll(accountId, {
-      search: (q.search as string) || undefined,
-      tag: (q.tag as string) || undefined,
-      location: (q.location as string) || undefined,
-    });
+    try {
+      return await this.contactsService.bulkRemoveAll(accountId, {
+        search: (q.search as string) || undefined,
+        tag: (q.tag as string) || undefined,
+        location: (q.location as string) || undefined,
+      });
+    } catch (e) {
+      throw new BadRequestException(
+        `bulkRemoveAll failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   @RequireRoles(UserRole.Admin, UserRole.Editor)
