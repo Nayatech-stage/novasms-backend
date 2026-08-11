@@ -376,7 +376,7 @@ export class ContactsController {
   }
 
   @RequireRoles(UserRole.Admin, UserRole.Editor)
-  @Delete('bulk/all')
+  @Delete('bulk-all')
   @ApiOperation({
     summary: 'Supprimer tous les contacts (avec filtres optionnels)',
   })
