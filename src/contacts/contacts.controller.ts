@@ -360,16 +360,14 @@ export class ContactsController {
   @RequireRoles(UserRole.Admin, UserRole.Editor)
   @Delete('bulk/delete')
   @ApiOperation({ summary: 'Supprimer plusieurs contacts en une requête' })
-  async bulkRemove(
-    @Query('ids') rawIds: string | undefined,
-    @Request() req: TenantRequest,
-  ) {
+  async bulkRemove(@Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
+    const rawIds = (req as any).query?.ids as string | undefined;
     const ids = rawIds
       ? rawIds
           .split(',')
-          .map((s) => s.trim())
+          .map((s: string) => s.trim())
           .filter(Boolean)
       : [];
     if (ids.length === 0)
@@ -382,18 +380,14 @@ export class ContactsController {
   @ApiOperation({
     summary: 'Supprimer tous les contacts (avec filtres optionnels)',
   })
-  async bulkRemoveAll(
-    @Query('search') search: string | undefined,
-    @Query('tag') tag: string | undefined,
-    @Query('location') location: string | undefined,
-    @Request() req: TenantRequest,
-  ) {
+  async bulkRemoveAll(@Request() req: TenantRequest) {
     const accountId = req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
+    const q = (req as any).query ?? {};
     return this.contactsService.bulkRemoveAll(accountId, {
-      search: search || undefined,
-      tag: tag || undefined,
-      location: location || undefined,
+      search: (q.search as string) || undefined,
+      tag: (q.tag as string) || undefined,
+      location: (q.location as string) || undefined,
     });
   }
 
