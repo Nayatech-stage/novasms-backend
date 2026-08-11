@@ -14,6 +14,8 @@ import {
   HttpCode,
   HttpStatus,
   HttpException,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -72,7 +74,7 @@ export class CampaignsController {
       (segmentId
         ? await this.campaignsService.findAccountIdBySegmentId(segmentId)
         : await this.campaignsService.findFirstAccountId());
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.create(accountId, body);
   }
 
@@ -86,7 +88,7 @@ export class CampaignsController {
     @Query('search') search?: string,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.list(accountId, {
       status,
       channel,
@@ -100,7 +102,7 @@ export class CampaignsController {
   @Post(':id/duplicate')
   async duplicate(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.duplicateCampaign(accountId, id);
   }
 
@@ -110,14 +112,14 @@ export class CampaignsController {
     @Query('channel') channel?: string,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.listAutomationCampaigns(accountId, channel);
   }
 
   @Get(':id')
   async get(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.get(accountId, id);
   }
 
@@ -129,7 +131,7 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     const result = await this.campaignsService.update(accountId, id, body);
     // Some clients/tests expect a scalar `segmentId` even when the DB
     // returned null; if the caller requested a segment connect, mirror it.
@@ -157,7 +159,7 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     return this.campaignsService.validateSchedule(accountId, id, body);
   }
@@ -166,14 +168,14 @@ export class CampaignsController {
   @Delete(':id')
   async delete(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.deleteCampaign(accountId, id);
   }
 
   @Delete(':id/schedule')
   async cancelSchedule(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.cancelScheduled(accountId, id);
   }
 
@@ -181,7 +183,7 @@ export class CampaignsController {
   @HttpCode(HttpStatus.OK)
   async evaluateWinner(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     return this.campaignsService.evaluateABWinner(id);
   }
 
@@ -192,7 +194,7 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     // Appel au service au lieu d'accéder à this.prisma
     return this.campaignsService.updateABConfig(accountId, id, body);
@@ -204,7 +206,7 @@ export class CampaignsController {
     @Query('segmentId') segmentId?: string,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
     void segmentId;
     return this.campaignsService.getBestSendTime(accountId);
   }
@@ -235,7 +237,7 @@ export class CampaignsController {
       ? await this.campaignsService.get(accountId, campaignId)
       : await this.campaignsService.findById(campaignId);
 
-    if (!campaign) throw new Error('Campaign not found');
+    if (!campaign) throw new NotFoundException('Campagne introuvable');
 
     return this.fileUploadService.uploadCampaignImage(campaignId, file);
   }
@@ -273,11 +275,11 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     // Verify campaign belongs to account
     const campaign = await this.campaignsService.get(accountId, campaignId);
-    if (!campaign) throw new Error('Campaign not found');
+    if (!campaign) throw new NotFoundException('Campagne introuvable');
 
     return this.fileUploadService.getCampaignImages(campaignId);
   }
@@ -289,10 +291,10 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     const campaign = await this.campaignsService.get(accountId, campaignId);
-    if (!campaign) throw new Error('Campaign not found');
+    if (!campaign) throw new NotFoundException('Campagne introuvable');
 
     await this.fileUploadService.deleteCampaignImageById(imageId);
     return { success: true };
@@ -304,11 +306,11 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     // Verify campaign belongs to account
     const campaign = await this.campaignsService.get(accountId, campaignId);
-    if (!campaign) throw new Error('Campaign not found');
+    if (!campaign) throw new NotFoundException('Campagne introuvable');
 
     await this.fileUploadService.deleteAllCampaignImages(campaignId);
     return { success: true };
@@ -335,7 +337,7 @@ export class CampaignsController {
     }
 
     const accountId = req.accountId ?? campaign.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     try {
       const immediateOrScheduled = body?.immediateOrScheduled || 'immediate';
@@ -395,7 +397,7 @@ export class CampaignsController {
     @Request() req: TenantRequest,
   ) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     try {
       const result = await this.campaignsService.saveDraft(accountId, id, body);
@@ -416,7 +418,7 @@ export class CampaignsController {
   @HttpCode(HttpStatus.OK)
   async cancelCampaign(@Param('id') id: string, @Request() req: TenantRequest) {
     const accountId = req.accountId;
-    if (!accountId) throw new Error('accountId manquant');
+    if (!accountId) throw new BadRequestException('accountId manquant');
 
     try {
       const result = await this.campaignsService.cancelCampaign(accountId, id);

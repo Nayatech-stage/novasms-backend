@@ -102,7 +102,12 @@ export class ContactsController {
   @ApiOperation({
     summary: 'Parser un fichier XLS/XLSX et retourner les lignes (max 50 000)',
   })
-  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 50 * 1024 * 1024 },
+    }),
+  )
   async parseExcel(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException('Fichier manquant');
     return this.importService.parseExcelFile(file);

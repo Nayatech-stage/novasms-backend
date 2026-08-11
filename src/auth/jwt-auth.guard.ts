@@ -27,35 +27,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         request.method === method && requestPath.startsWith(route),
     );
 
-    const isDevImageUploadRoute =
-      process.env.NODE_ENV !== 'production' &&
-      request.method === 'POST' &&
-      /\/api\/campaigns\/[^/]+\/images\/upload$/.test(requestPath);
-
     const isPublicCampaignImageRoute =
       request.method === 'GET' &&
       /\/api\/campaigns\/images\/[^/]+$/.test(requestPath);
 
-    const isDevCampaignCreateRoute =
-      process.env.NODE_ENV !== 'production' &&
-      request.method === 'POST' &&
-      /\/api\/campaigns$/.test(requestPath);
-
-    if (isPublicRoute || isPublicCampaignImageRoute || isDevImageUploadRoute) {
+    if (isPublicRoute || isPublicCampaignImageRoute) {
       return true;
-    }
-
-    // For development-only campaign create route: if the client provided an
-    // Authorization header, run the normal auth flow so `req.user` and
-    // subsequently `req.accountId` can be populated by the TenantInterceptor.
-    if (isDevCampaignCreateRoute) {
-      const req2 = context.switchToHttp().getRequest();
-      const authHeader =
-        req2.headers?.authorization || req2.headers?.Authorization;
-      if (!authHeader) {
-        return true;
-      }
-      // if auth header present, fallthrough to super.canActivate
     }
 
     const result = (await super.canActivate(context)) as boolean;

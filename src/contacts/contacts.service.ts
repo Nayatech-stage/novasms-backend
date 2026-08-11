@@ -80,7 +80,9 @@ export class ContactsService {
 
       // tags est Json? → les opérateurs varient selon le type de recherche
       if (c.field === 'tag') {
-        const tagValue = String(c.value);
+        const tagValue = String(c.value)
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"');
         if (c.operator === 'contains') {
           // Recherche d'un tag dont la valeur contient la sous-chaîne saisie.
           // On encadre la valeur de guillemets JSON pour éviter les faux positifs :
@@ -89,7 +91,7 @@ export class ContactsService {
           cond = { tags: { string_contains: `"${tagValue}"` } };
         } else {
           // Match exact d'un élément (equals / in)
-          cond = { tags: { array_contains: [tagValue] } };
+          cond = { tags: { array_contains: [String(c.value)] } };
         }
       } else if (c.field === 'status') {
         const v = String(c.value).toLowerCase();
@@ -319,7 +321,17 @@ export class ContactsService {
   }
 
   async remove(accountId: string, id: string): Promise<{ success: true }> {
-    await this.prisma.contact.delete({ where: { id, accountId } });
+    try {
+      await this.prisma.contact.delete({ where: { id, accountId } });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        throw new NotFoundException('Contact introuvable');
+      }
+      throw e;
+    }
     this.segmentRecalculationService
       .addRecalculateAccountSegmentsJob(accountId)
       .catch(() => {});
