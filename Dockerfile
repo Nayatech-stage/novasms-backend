@@ -12,14 +12,9 @@ RUN npm ci --no-audit --no-fund \
   --fetch-retry-mintimeout=20000 \
   --fetch-retry-maxtimeout=120000
 
-FROM deps AS build
-
 COPY prisma ./prisma
 RUN DATABASE_URL="postgresql://novasms:novasms@localhost:5432/novasms?schema=public" npx prisma generate
 
-COPY nest-cli.json tsconfig*.json ./
-COPY src ./src
-RUN npm run build
 RUN npm prune --omit=dev --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS runtime
@@ -35,10 +30,10 @@ RUN apt-get update \
   && groupadd --system --gid 1001 nodejs \
   && useradd --system --uid 1001 nestjs
 
-COPY --from=build --chown=nestjs:nodejs /app/package*.json ./
-COPY --from=build --chown=nestjs:nodejs /app/node_modules ./node_modules
-COPY --from=build --chown=nestjs:nodejs /app/dist ./dist
-COPY --from=build --chown=nestjs:nodejs /app/prisma ./prisma
+COPY --from=deps --chown=nestjs:nodejs /app/package*.json ./
+COPY --from=deps --chown=nestjs:nodejs /app/node_modules ./node_modules
+COPY --from=deps --chown=nestjs:nodejs /app/prisma ./prisma
+COPY --chown=nestjs:nodejs dist ./dist
 
 RUN mkdir -p /app/uploads \
   && chown -R nestjs:nodejs /app/uploads

@@ -17,14 +17,24 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: "postgresql://novasms:novasms@localhost:5432/novasms?schema=public"
+
+      - name: Build TypeScript
+        run: npm run build
 
       - name: Pack source
         run: |
           COPYFILE_DISABLE=1 tar \
             --exclude='./.git' \
             --exclude='./node_modules' \
-            --exclude='./dist' \
             --exclude='./coverage' \
             --exclude='./uploads' \
             --exclude='./dev.db' \
