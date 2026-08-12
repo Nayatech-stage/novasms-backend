@@ -175,7 +175,14 @@ export class AccountService {
     const [users, invitations] = await Promise.all([
       this.prisma.user.findMany({
         where: { accountId },
-        select: { id: true, email: true, role: true, lastLogin: true },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          lastLogin: true,
+          firstName: true,
+          lastName: true,
+        },
         orderBy: { lastLogin: 'desc' },
       }),
       this.prisma.invitation.findMany({

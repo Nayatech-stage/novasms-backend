@@ -413,6 +413,11 @@ export class AuthService {
       primaryUser.id,
     );
 
+    await this.prisma.user.update({
+      where: { id: primaryUser.id },
+      data: { lastLogin: new Date() },
+    });
+
     return {
       success: true,
       accessToken: tokens.accessToken,
@@ -466,6 +471,11 @@ export class AuthService {
       memberUser.email,
       memberUser.id,
     );
+
+    await this.prisma.user.update({
+      where: { id: memberUser.id },
+      data: { lastLogin: new Date() },
+    });
 
     return {
       success: true,
@@ -580,6 +590,11 @@ export class AuthService {
       undefined,
       primaryUser.id,
     );
+
+    await this.prisma.user.update({
+      where: { id: primaryUser.id },
+      data: { lastLogin: new Date() },
+    });
 
     return {
       success: true,
