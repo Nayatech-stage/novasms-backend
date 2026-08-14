@@ -241,14 +241,16 @@ export class AccountController {
 
   @Post('dev/add-credits')
   @ApiOperation({
-    summary: 'Dev/staging only — ajoute des crédits directement',
+    summary: 'Staging only — ajoute des crédits via clé interne',
   })
   async devAddCredits(
     @Body() body: { amount: number },
     @Request() req: TenantRequest,
   ) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new ForbiddenException('Non disponible en production');
+    const devKey = (req.headers as Record<string, string>)['x-dev-key'];
+    const expectedKey = process.env.DEV_CREDITS_KEY || 'nova-staging-dev-2026';
+    if (devKey !== expectedKey) {
+      throw new ForbiddenException('Accès non autorisé');
     }
     const accountId = req.user.accountId || req.accountId;
     if (!accountId) throw new BadRequestException('accountId manquant');
