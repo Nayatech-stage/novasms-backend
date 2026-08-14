@@ -35,13 +35,12 @@ export class ResendProvider implements EmailProvider {
     sendId?: string,
   ): Promise<EmailSendResult> {
     try {
-      // RESEND_TEST_RECIPIENT : redirection seulement hors production
-      const isProduction = process.env.NODE_ENV === 'production';
-      const toRecipient =
-        !isProduction && this.testRecipient ? this.testRecipient : to;
-      if (!isProduction && this.testRecipient && this.testRecipient !== to) {
+      // RESEND_TEST_RECIPIENT : redirection active si la variable est configurée (staging ou local)
+      // Indépendant de NODE_ENV car le staging peut tourner en mode 'production'
+      const toRecipient = this.testRecipient ? this.testRecipient : to;
+      if (this.testRecipient && this.testRecipient !== to) {
         this.logger.warn(
-          `TEST MODE: redirection campagne ${to} → ${this.testRecipient}`,
+          `TEST RECIPIENT: redirection ${to} → ${this.testRecipient}`,
         );
       }
       const result = await this.resend.emails.send({
