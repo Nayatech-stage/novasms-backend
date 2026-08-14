@@ -163,7 +163,7 @@ function renderEmailBlock(
     const src = typeof content.src === 'string' ? content.src : '';
     const alt = typeof content.alt === 'string' ? content.alt : 'Image';
     if (!src) return '';
-    return `<div style="margin:0 0 12px;"><img src="${escapeHtml(rewriteCampaignImageSource(src))}" alt="${escapeHtml(alt)}" style="max-width:100%; width:100%; height:auto; display:block; border:0; border-radius:12px;"/></div>`;
+    return `<div style="margin:0 0 12px;text-align:center;"><img src="${escapeHtml(rewriteCampaignImageSource(src))}" alt="${escapeHtml(alt)}" style="max-width:100%; height:auto; display:inline-block; border:0; border-radius:12px;"/></div>`;
   }
 
   if (type === 'button') {

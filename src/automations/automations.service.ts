@@ -725,7 +725,14 @@ export class AutomationsService {
     const segmentId =
       explicitSegmentId ||
       (await this.resolveCampaignSegmentId(automation.campaignId));
-    if (!segmentId) return [];
+
+    if (!segmentId) {
+      // Aucune cible explicite → cibler tous les contacts non désinscrit du compte
+      return this.prisma.contact.findMany({
+        where: { accountId: automation.accountId, optOut: false },
+        select: { id: true },
+      });
+    }
 
     const segment = await this.prisma.segment.findFirst({
       where: { id: segmentId, accountId: automation.accountId },
