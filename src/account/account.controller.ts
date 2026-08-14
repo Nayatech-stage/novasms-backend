@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   Request,
+  Headers,
   BadRequestException,
   ForbiddenException,
   Res,
@@ -247,7 +248,9 @@ export class AccountController {
     @Body() body: { amount: number },
     @Request() req: TenantRequest,
   ) {
-    const devKey = (req.headers as Record<string, string>)['x-dev-key'];
+    const devKey = (req.headers as unknown as Record<string, string>)[
+      'x-dev-key'
+    ];
     const expectedKey = process.env.DEV_CREDITS_KEY || 'nova-staging-dev-2026';
     if (devKey !== expectedKey) {
       throw new ForbiddenException('Accès non autorisé');
