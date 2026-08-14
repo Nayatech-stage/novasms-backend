@@ -529,4 +529,17 @@ export class AccountService {
       limit: limitNum,
     };
   }
+
+  async devAddCredits(accountId: string, amount: number) {
+    const updated = await this.prisma.account.update({
+      where: { id: accountId },
+      data: { creditBalance: { increment: amount } },
+      select: { creditBalance: true },
+    });
+    return {
+      success: true,
+      message: `${amount} FCFA ajoutés au compte de staging`,
+      newBalance: Number(updated.creditBalance),
+    };
+  }
 }

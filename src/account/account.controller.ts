@@ -238,4 +238,23 @@ export class AccountController {
       to,
     });
   }
+
+  @Post('dev/add-credits')
+  @ApiOperation({
+    summary: 'Dev/staging only — ajoute des crédits directement',
+  })
+  async devAddCredits(
+    @Body() body: { amount: number },
+    @Request() req: TenantRequest,
+  ) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('Non disponible en production');
+    }
+    const accountId = req.user.accountId || req.accountId;
+    if (!accountId) throw new BadRequestException('accountId manquant');
+    const amount = Number(body.amount);
+    if (!amount || amount <= 0)
+      throw new BadRequestException('Montant invalide');
+    return this.accountService.devAddCredits(accountId, amount);
+  }
 }
